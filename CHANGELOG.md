@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 - 2026-08-01
+
+- Replaced backtracking-prone address, fenced-JSON, and trailing-slash parsing with bounded deterministic implementations; hardened structured logging and architecture validation.
+- Restricted CodeQL to maintained production source and resolved every resulting alert without dismissals or generated-code exclusions hiding first-party runtime code.
+- Removed shell-based Windows package execution, constrained fixed release commands, and validated materialized sidecar, installer, and uninstaller executables before launch.
+
 ## 0.1.0 - 2026-07-31
 
 - Initial local-first Electron application for macOS, Windows, and Linux on x64 and arm64.
