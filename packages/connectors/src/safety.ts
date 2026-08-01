@@ -1,5 +1,6 @@
 import { sha256Base64Url } from './encoding.js';
 import { ConnectorError } from './errors.js';
+import { isProviderEmail } from './mailbox.js';
 import type {
   EmailAddress,
   EmailMessage,
@@ -9,7 +10,6 @@ import type {
   SendSafety,
 } from './types.js';
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 const HEADER_NEWLINE = /[\r\n]/u;
 const RESERVED_HEADERS = new Set([
   'to',
@@ -93,8 +93,8 @@ export async function fingerprintEmail(
 }
 
 export function validateSendContext(context: SendContext): void {
-  if (!EMAIL_PATTERN.test(context.senderAddress.trim()) || /[\r\n]/u.test(context.senderAddress)) {
-    throw new TypeError(`Invalid authenticated sender address: ${context.senderAddress}`);
+  if (!isProviderEmail(context.senderAddress)) {
+    throw new TypeError('Invalid authenticated sender address');
   }
   if (context.providerThreadId && /[\r\n]/u.test(context.providerThreadId)) {
     throw new TypeError('Provider thread id cannot contain newlines');
@@ -112,8 +112,8 @@ export function validateEmailMessage(message: EmailMessage): void {
 
   const recipients = [...allRecipients(message), ...(message.replyTo ? [message.replyTo] : [])];
   for (const address of recipients) {
-    if (!EMAIL_PATTERN.test(address.email.trim()) || /[\r\n]/u.test(address.email)) {
-      throw new TypeError(`Invalid email address: ${address.email}`);
+    if (!isProviderEmail(address.email)) {
+      throw new TypeError('Invalid email address');
     }
     if (address.name && /[\r\n]/u.test(address.name)) {
       throw new TypeError('Email display names cannot contain newlines');

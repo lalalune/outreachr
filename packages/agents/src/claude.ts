@@ -242,7 +242,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
         options: {
           abortController,
           cwd: this.#workspaceDirectory,
-          env: { ...this.#environment, CLAUDE_AGENT_SDK_CLIENT_APP: 'outreachr/0.1.0' },
+          env: { ...this.#environment, CLAUDE_AGENT_SDK_CLIENT_APP: 'outreachr/0.1.1' },
           systemPrompt: prepared.system,
           tools: [],
           allowedTools: [...allowedMcpTools],
@@ -468,7 +468,7 @@ export function sanitizeClaudeEnvironment(
   ] as const;
   const clean: NodeJS.ProcessEnv = {};
   for (const name of names) if (source[name] !== undefined) clean[name] = source[name];
-  clean.CLAUDE_AGENT_SDK_CLIENT_APP = 'outreachr/0.1.0';
+  clean.CLAUDE_AGENT_SDK_CLIENT_APP = 'outreachr/0.1.1';
   return clean;
 }
 

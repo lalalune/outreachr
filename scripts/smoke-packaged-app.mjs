@@ -87,7 +87,13 @@ async function smokeDistribution(distribution, timeout) {
     ]);
     if (child.exitCode !== null) throw new Error('application exited immediately after readiness');
     console.log(
-      `${distribution.kind} renderer ready: ${renderer.title}; ${renderer.workspace}; ${renderer.bodyTextLength} visible text characters.`,
+      JSON.stringify({
+        event: 'renderer-ready',
+        distribution: distribution.kind,
+        title: renderer.title,
+        workspace: renderer.workspace,
+        visibleTextCharacters: renderer.bodyTextLength,
+      }),
     );
   } catch (error) {
     smokeError = new Error(

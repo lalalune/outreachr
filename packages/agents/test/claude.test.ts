@@ -200,7 +200,7 @@ describe('ClaudeAgentAdapter', () => {
     expect(captured?.options.disallowedTools).toEqual(CLAUDE_DISALLOWED_TOOLS);
     expect(captured?.options.env?.UNRELATED_SECRET).toBeUndefined();
     expect(captured?.options.env?.ANTHROPIC_API_KEY).toBe('secret');
-    expect(captured?.options.env?.CLAUDE_AGENT_SDK_CLIENT_APP).toBe('outreachr/0.1.0');
+    expect(captured?.options.env?.CLAUDE_AGENT_SDK_CLIENT_APP).toBe('outreachr/0.1.1');
     await expect(
       captured?.options.canUseTool?.(
         'Bash',

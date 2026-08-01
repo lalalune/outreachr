@@ -85,7 +85,9 @@ interface GoogleEventJson {
 const defaultNow = (): Date => new Date();
 
 function trimTrailingSlash(value: string): string {
-  return value.replace(/\/+$/u, '');
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') end -= 1;
+  return value.slice(0, end);
 }
 
 function googleDateTime(value: CalendarDateTime): GoogleEventDateTime {

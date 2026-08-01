@@ -6,7 +6,7 @@ import { stableJson } from './validation.js';
 
 const ContributionOptionsSchema = z.object({
   packageId: z.string().trim().min(1).max(200),
-  packageVersion: z.string().trim().min(1).max(100).default('0.1.0'),
+  packageVersion: z.string().trim().min(1).max(100).default('0.1.1'),
   createdAt: z.string().datetime({ offset: true }).optional(),
   contributor: z.string().trim().max(500).nullable().default(null),
   licenseSpdx: z.string().trim().min(1).max(200).default('NOASSERTION'),

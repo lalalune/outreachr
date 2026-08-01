@@ -36,6 +36,7 @@ jobs:
         with:
           languages: javascript-typescript
           queries: security-extended
+          config-file: ./.github/codeql-config.yml
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
@@ -57,9 +58,6 @@ jobs:
 
       - name: Install frozen dependency graph
         run: pnpm install --frozen-lockfile
-
-      - name: Build analyzable sources
-        run: pnpm build
 
       - name: Analyze
         uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4

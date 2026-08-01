@@ -10,6 +10,8 @@ import {
   assertLoopbackRedirectUri,
   assertSendAllowed,
   createLoopbackRedirectUri,
+  isProviderEmail,
+  parseMailboxAddresses,
   prepareDesktopAuthorization,
   refreshAccessToken,
   validateOAuthCallback,
@@ -19,6 +21,21 @@ import {
 import { FIXED_NOW, approvedSafety, message, noSleep, sendContext } from './helpers.js';
 
 describe('input validation and less common branches', () => {
+  it('parses bounded provider address lists without backtracking on hostile input', () => {
+    expect(
+      parseMailboxAddresses(
+        '"Investor, Jane" <jane@example.com>, Group: partner@example.org;, malformed',
+      ),
+    ).toEqual([
+      { email: 'jane@example.com', name: 'Investor, Jane' },
+      { email: 'partner@example.org' },
+    ]);
+    expect(isProviderEmail(' founder@example.com ')).toBe(true);
+    expect(isProviderEmail('two@@example.com')).toBe(false);
+    expect(isProviderEmail(`a@${'x'.repeat(318)}.com`)).toBe(false);
+    expect(parseMailboxAddresses(`${'!,'.repeat(40_000)}person@example.com`)).toEqual([]);
+  });
+
   it('validates calendar date ranges, all-day values, pagination, and free/busy', () => {
     expect(() =>
       validateEventInput({

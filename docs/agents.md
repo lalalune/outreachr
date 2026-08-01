@@ -19,7 +19,7 @@ To enable Claude:
 3. Select **Save encrypted API key**. The write-only field clears after every attempt. The key crosses the typed preload command once, is encrypted in the main process with Electron's operating-system credential facility, and only ciphertext is stored in the local SQLite vault. Bootstrap/status responses never return it, and production diagnostics must never log it.
 4. Select **Detect** if Claude does not show **Ready**. Use **Remove stored API key** to delete the local ciphertext. Credentials are single-device; a restored vault still requires the operating-system credential context that encrypted it.
 
-Outreachr identifies the local subprocess as `outreachr/0.1.0` and disables built-in tools, plugins, skills, subagents, settings sources, filesystem additions, and persistent sessions. `strictMcpConfig` permits only Outreachr's authenticated loopback MCP server. The permission callback allows only exact `mcp__outreachr__…` names from the run allowlist and interrupts every other tool attempt.
+Outreachr identifies the local subprocess as `outreachr/0.1.1` and disables built-in tools, plugins, skills, subagents, settings sources, filesystem additions, and persistent sessions. `strictMcpConfig` permits only Outreachr's authenticated loopback MCP server. The permission callback allows only exact `mcp__outreachr__…` names from the run allowlist and interrupts every other tool attempt.
 
 Anthropic's product and legal guidance can change. Distributors must re-check the official authentication and Agent SDK terms before each release; this document is an implementation constraint, not legal advice.
 

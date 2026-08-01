@@ -1,0 +1,18 @@
+name: Outreachr production source
+
+# JavaScript and TypeScript are analyzed without a build. Limit findings to
+# maintained production/release source, not generated bundles or test fixtures.
+paths:
+  - apps/desktop/src
+  - packages
+  - scripts
+paths-ignore:
+  - apps/desktop/e2e
+  - apps/desktop/out
+  - apps/desktop/test
+  - '**/coverage/**'
+  - '**/dist/**'
+  - '**/node_modules/**'
+  - '**/test/**'
+  - '**/test-results/**'
+  - '**/*.test.*'

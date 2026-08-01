@@ -5,9 +5,13 @@ import { parseArgs, targetId } from './_lib.mjs';
 const args = parseArgs();
 const expectedPlatform = String(args.platform ?? process.platform);
 const expectedArch = String(args.arch ?? process.arch);
-const runnerArch = process.env.RUNNER_ARCH?.toLowerCase()
-  .replace('x64', 'x64')
-  .replace('arm64', 'arm64');
+const rawRunnerArch = process.env.RUNNER_ARCH?.toLowerCase();
+const runnerArch =
+  rawRunnerArch === 'amd64' || rawRunnerArch === 'x86_64'
+    ? 'x64'
+    : rawRunnerArch === 'aarch64'
+      ? 'arm64'
+      : rawRunnerArch;
 
 const failures = [];
 if (process.platform !== expectedPlatform)

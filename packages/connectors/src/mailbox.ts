@@ -1,6 +1,8 @@
 import type { EmailAddress, ListMailboxMessagesInput } from './types.js';
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+const MAX_EMAIL_LENGTH = 320;
+const MAX_ADDRESS_LIST_LENGTH = 64 * 1024;
+const MAX_PARSED_ADDRESSES = 1_000;
 
 export function validateMailboxListInput(input: ListMailboxMessagesInput): void {
   if (input.since !== undefined && !Number.isFinite(Date.parse(input.since))) {
@@ -18,14 +20,15 @@ export function validateMailboxListInput(input: ListMailboxMessagesInput): void 
 }
 
 export function parseMailboxAddresses(value: string | undefined): EmailAddress[] {
-  if (!value) return [];
+  if (!value || value.length > MAX_ADDRESS_LIST_LENGTH) return [];
   const addresses: EmailAddress[] = [];
-  const pattern = /(?:"([^"]+)"|([^,<]+?))?\s*<([^<>\s]+@[^<>\s]+)>|([^\s,<]+@[^\s,>]+)/gu;
-  for (const match of value.matchAll(pattern)) {
-    const email = (match[3] ?? match[4] ?? '').trim();
+  for (const token of splitAddressList(value)) {
+    const parsed = parseAddressToken(token);
+    if (!parsed) continue;
+    const { email, name } = parsed;
     if (!isProviderEmail(email)) continue;
-    const name = (match[1] ?? match[2] ?? '').trim().replace(/^"|"$/gu, '');
     addresses.push({ email, ...(name ? { name } : {}) });
+    if (addresses.length >= MAX_PARSED_ADDRESSES) break;
   }
   return addresses;
 }
@@ -43,7 +46,69 @@ export function providerEmailAddress(email: unknown, name?: unknown): EmailAddre
 }
 
 export function isProviderEmail(value: unknown): value is string {
-  return typeof value === 'string' && EMAIL_PATTERN.test(value.trim()) && !/[\r\n]/u.test(value);
+  if (typeof value !== 'string') return false;
+  const email = value.trim();
+  if (!email || email.length > MAX_EMAIL_LENGTH) return false;
+  for (const character of email) {
+    if (!character.trim()) return false;
+  }
+  const at = email.indexOf('@');
+  if (at <= 0 || at !== email.lastIndexOf('@') || at >= email.length - 1) return false;
+  const dot = email.indexOf('.', at + 1);
+  return dot > at + 1 && dot < email.length - 1;
+}
+
+function splitAddressList(value: string): string[] {
+  const tokens: string[] = [];
+  let start = 0;
+  let quoted = false;
+  let escaped = false;
+  let angleDepth = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quoted && character === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (quoted) continue;
+    if (character === '<') angleDepth += 1;
+    else if (character === '>' && angleDepth > 0) angleDepth -= 1;
+    else if (character === ',' && angleDepth === 0) {
+      tokens.push(value.slice(start, index));
+      start = index + 1;
+    }
+  }
+  tokens.push(value.slice(start));
+  return tokens;
+}
+
+function parseAddressToken(token: string): { email: string; name?: string } | undefined {
+  let candidate = token.trim();
+  if (!candidate) return undefined;
+  while (candidate.endsWith(';')) candidate = candidate.slice(0, -1).trim();
+
+  const open = candidate.lastIndexOf('<');
+  const close = open >= 0 ? candidate.indexOf('>', open + 1) : -1;
+  if (open >= 0 && close > open) {
+    const email = candidate.slice(open + 1, close).trim();
+    let name = candidate.slice(0, open).trim();
+    if (name.startsWith('"') && name.endsWith('"') && name.length >= 2) {
+      name = name.slice(1, -1).trim();
+    }
+    return { email, ...(name ? { name } : {}) };
+  }
+
+  const group = candidate.lastIndexOf(':');
+  if (group >= 0) candidate = candidate.slice(group + 1).trim();
+  return candidate ? { email: candidate } : undefined;
 }
 
 /** Return a canonical provider timestamp, or `undefined` for missing/invalid data. */

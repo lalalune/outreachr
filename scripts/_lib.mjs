@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -257,12 +257,11 @@ export async function run(command, args = [], options = {}) {
     sensitive = false,
   } = options;
   return await new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = execFile(command, args, {
       cwd,
       env,
       shell: false,
       windowsHide: true,
-      stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     });
     let stdout = '';
     let stderr = '';
@@ -275,6 +274,9 @@ export async function run(command, args = [], options = {}) {
       child.stderr.on('data', (chunk) => {
         stderr += chunk;
       });
+    } else {
+      child.stdout.pipe(process.stdout);
+      child.stderr.pipe(process.stderr);
     }
     let timedOut = false;
     const timer = timeoutMs

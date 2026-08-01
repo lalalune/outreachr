@@ -434,7 +434,7 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
     if (this.#disposed) throw new AgentRuntimeError('PROTOCOL_ERROR', 'Codex adapter is disposed.');
     this.#initialize ??= (async () => {
       await this.#rpc.request('initialize', {
-        clientInfo: { name: 'outreachr', title: 'Outreachr', version: '0.1.0' },
+        clientInfo: { name: 'outreachr', title: 'Outreachr', version: '0.1.1' },
         capabilities: {
           experimentalApi: true,
           requestAttestation: false,

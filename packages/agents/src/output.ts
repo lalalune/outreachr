@@ -238,13 +238,28 @@ function assertOnlyKeys(
 
 function parseJsonText(text: string): unknown {
   const trimmed = text.trim();
-  const match = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
-  const json = match?.[1] ?? trimmed;
+  const json = unwrapJsonFence(trimmed);
   try {
     return JSON.parse(json) as unknown;
   } catch (error) {
     throw new AgentRuntimeError('INVALID_OUTPUT', 'Agent output was not valid JSON.', error);
   }
+}
+
+function unwrapJsonFence(value: string): string {
+  if (!value.startsWith('```') || !value.endsWith('```') || value.length < 6) return value;
+  let start = 3;
+  const language = value.slice(start, start + 4);
+  if (language.toLocaleLowerCase('en-US') === 'json') start += 4;
+  else if (start < value.length - 3 && !value[start]?.trim()) {
+    // A fence with no language starts directly with whitespace/newline.
+  } else {
+    return value;
+  }
+  let end = value.length - 3;
+  while (start < end && !value[start]?.trim()) start += 1;
+  while (end > start && !value[end - 1]?.trim()) end -= 1;
+  return value.slice(start, end);
 }
 
 function requiredString(value: unknown, index: number, name: string, max: number): string {

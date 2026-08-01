@@ -1,7 +1,7 @@
 {
   "name": "@outreachr/mcp",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A fail-closed, read-and-propose-only local MCP server for Outreachr",
   "license": "Apache-2.0",
   "type": "module",
