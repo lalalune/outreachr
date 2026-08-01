@@ -260,7 +260,6 @@ export async function run(command, args = [], options = {}) {
     const child = execFile(command, args, {
       cwd,
       env,
-      shell: false,
       windowsHide: true,
     });
     let stdout = '';
