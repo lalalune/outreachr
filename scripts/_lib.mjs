@@ -279,7 +279,14 @@ async function runSpawned(command, args, options, start) {
     sensitive = false,
   } = options;
   return await new Promise((resolve, reject) => {
-    const child = start({ cwd, env, windowsHide: true });
+    const child = start({
+      cwd,
+      env,
+      windowsHide: true,
+      // Native packaging tools such as ditto must retain true inherited handles.
+      // Piping and forwarding output is not equivalent on every hosted macOS runner.
+      stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    });
     let stdout = '';
     let stderr = '';
     if (capture) {
@@ -291,9 +298,6 @@ async function runSpawned(command, args, options, start) {
       child.stderr.on('data', (chunk) => {
         stderr += chunk;
       });
-    } else {
-      child.stdout.pipe(process.stdout);
-      child.stderr.pipe(process.stderr);
     }
     let timedOut = false;
     const timer = timeoutMs
