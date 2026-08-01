@@ -324,8 +324,6 @@ async function runSpawned(command, args, options, start) {
 
 function spawnKnownCommand(command, args, options) {
   switch (command) {
-    case 'cmd.exe':
-      return spawn('cmd.exe', args, options);
     case 'codesign':
       return spawn('codesign', args, options);
     case 'ditto':
@@ -519,22 +517,39 @@ async function canonicalizeMachOLinkedit(target) {
   }
 }
 
-export function pnpmInvocation(args = [], platform = process.platform) {
+export function pnpmInvocation(
+  args = [],
+  platform = process.platform,
+  nodeExecutable = process.execPath,
+) {
   if (platform !== 'win32') return { command: 'pnpm', args };
-  for (const argument of args) {
-    if (!/^[A-Za-z0-9@./:_=+-]+$/.test(argument)) {
-      throw new Error(`Unsafe pnpm argument for cmd.exe: ${argument}`);
-    }
+  if (!path.win32.isAbsolute(nodeExecutable)) {
+    throw new Error(`Windows Node.js executable path must be absolute: ${nodeExecutable}`);
   }
   return {
-    command: 'cmd.exe',
-    args: ['/d', '/s', '/c', ['pnpm.cmd', ...args].join(' ')],
+    command: nodeExecutable,
+    args: [
+      path.win32.join(
+        path.win32.dirname(nodeExecutable),
+        'node_modules',
+        'corepack',
+        'dist',
+        'pnpm.js',
+      ),
+      ...args,
+    ],
   };
 }
 
 export async function runPnpm(args = [], options = {}) {
+  if (process.platform !== 'win32') return await run('pnpm', args, options);
   const invocation = pnpmInvocation(args);
-  return await run(invocation.command, invocation.args, options);
+  if (!(await exists(invocation.args[0]))) {
+    throw new Error(
+      `Corepack's pnpm entry point is missing at ${invocation.args[0]}; install the Node.js Corepack distribution and activate pnpm first`,
+    );
+  }
+  return await runExecutable(invocation.command, invocation.args, options);
 }
 
 export function executableName(baseName) {

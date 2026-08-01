@@ -155,11 +155,26 @@ try {
     command: 'pnpm',
     args: ['--filter', '@outreachr/desktop', 'build'],
   });
-  assert.deepEqual(pnpmInvocation(['--filter', '@outreachr/desktop', 'build'], 'win32'), {
-    command: 'cmd.exe',
-    args: ['/d', '/s', '/c', 'pnpm.cmd --filter @outreachr/desktop build'],
-  });
-  assert.throws(() => pnpmInvocation(['build & echo unsafe'], 'win32'), /Unsafe pnpm argument/);
+  assert.deepEqual(
+    pnpmInvocation(
+      ['--filter', '@outreachr/desktop', 'build & echo remains one argument'],
+      'win32',
+      'C:\\node\\node.exe',
+    ),
+    {
+      command: 'C:\\node\\node.exe',
+      args: [
+        'C:\\node\\node_modules\\corepack\\dist\\pnpm.js',
+        '--filter',
+        '@outreachr/desktop',
+        'build & echo remains one argument',
+      ],
+    },
+  );
+  assert.throws(
+    () => pnpmInvocation(['build'], 'win32', 'node.exe'),
+    /Windows Node\.js executable path must be absolute/,
+  );
   await assert.rejects(() => run('sh', ['-c', 'true']), /Unsupported fixed command/);
   const nodeProbe = await runExecutable(process.execPath, ['--version']);
   assert.equal(nodeProbe.code, 0);
