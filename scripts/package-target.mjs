@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { parseArgs, repoRoot, runPnpm, targetId } from './_lib.mjs';
+import { explicitlyUnsignedEnvironment, parseArgs, repoRoot, runPnpm, targetId } from './_lib.mjs';
 
 const args = parseArgs();
 const expectedPlatform = String(args.platform ?? process.platform);
@@ -63,17 +63,3 @@ await runPnpm(builderArgs, {
 console.log(
   `Built native ${release ? 'release' : unsigned ? 'explicitly unsigned' : 'verification'} packages for ${targetId()}.`,
 );
-
-function explicitlyUnsignedEnvironment(environment) {
-  const result = { ...environment, CSC_IDENTITY_AUTO_DISCOVERY: 'false' };
-  for (const name of [
-    'CSC_LINK',
-    'CSC_KEY_PASSWORD',
-    'CSC_NAME',
-    'WIN_CSC_LINK',
-    'WIN_CSC_KEY_PASSWORD',
-  ]) {
-    delete result[name];
-  }
-  return result;
-}

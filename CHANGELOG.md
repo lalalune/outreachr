@@ -5,6 +5,7 @@
 - Replaced backtracking-prone address, fenced-JSON, and trailing-slash parsing with bounded deterministic implementations; hardened structured logging and architecture validation.
 - Restricted CodeQL to maintained production source and resolved every resulting alert without dismissals or generated-code exclusions hiding first-party runtime code.
 - Removed shell-based Windows package execution, constrained fixed release commands, and validated materialized sidecar, installer, and uninstaller executables before launch.
+- Restored credential-free ad-hoc signing in macOS pull-request verification so mounted DMGs and ZIPs receive valid copy-and-launch smoke coverage on both architectures.
 
 ## 0.1.0 - 2026-07-31
 

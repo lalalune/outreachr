@@ -8,6 +8,7 @@ import {
   collectCleanupErrors,
   copyCanonicalText,
   copyTree,
+  explicitlyUnsignedEnvironment,
   nsisUninstallArgs,
   normalizeCodeSignature,
   parseArgs,
@@ -175,6 +176,26 @@ try {
     () => pnpmInvocation(['build'], 'win32', 'node.exe'),
     /Windows Node\.js executable path must be absolute/,
   );
+  const unsignedMacEnvironment = explicitlyUnsignedEnvironment(
+    {
+      CSC_FOR_PULL_REQUEST: 'false',
+      CSC_LINK: 'must-not-survive',
+      CSC_KEY_PASSWORD: 'must-not-survive',
+      KEEP_ME: 'yes',
+    },
+    'darwin',
+  );
+  assert.equal(unsignedMacEnvironment.CSC_FOR_PULL_REQUEST, 'true');
+  assert.equal(unsignedMacEnvironment.CSC_IDENTITY_AUTO_DISCOVERY, 'false');
+  assert.equal(unsignedMacEnvironment.KEEP_ME, 'yes');
+  assert.equal('CSC_LINK' in unsignedMacEnvironment, false);
+  assert.equal('CSC_KEY_PASSWORD' in unsignedMacEnvironment, false);
+  const unsignedWindowsEnvironment = explicitlyUnsignedEnvironment(
+    { CSC_FOR_PULL_REQUEST: 'true', WIN_CSC_LINK: 'must-not-survive' },
+    'win32',
+  );
+  assert.equal('CSC_FOR_PULL_REQUEST' in unsignedWindowsEnvironment, false);
+  assert.equal('WIN_CSC_LINK' in unsignedWindowsEnvironment, false);
   await assert.rejects(() => run('sh', ['-c', 'true']), /Unsupported fixed command/);
   const nodeProbe = await runExecutable(process.execPath, ['--version']);
   assert.equal(nodeProbe.code, 0);

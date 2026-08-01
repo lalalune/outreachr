@@ -583,6 +583,30 @@ export function targetId(platform = process.platform, arch = process.arch) {
   return `${platformName}-${arch}`;
 }
 
+export function explicitlyUnsignedEnvironment(
+  environment = process.env,
+  platform = process.platform,
+) {
+  const result = { ...environment, CSC_IDENTITY_AUTO_DISCOVERY: 'false' };
+  for (const name of [
+    'CSC_LINK',
+    'CSC_KEY_PASSWORD',
+    'CSC_NAME',
+    'WIN_CSC_LINK',
+    'WIN_CSC_KEY_PASSWORD',
+  ]) {
+    delete result[name];
+  }
+  if (platform === 'darwin') {
+    // Electron Builder otherwise skips even the credential-free ad-hoc identity (`-`)
+    // for pull requests, leaving Apple Silicon verification bundles unlaunchable.
+    result.CSC_FOR_PULL_REQUEST = 'true';
+  } else {
+    delete result.CSC_FOR_PULL_REQUEST;
+  }
+  return result;
+}
+
 export async function hashManifest(root, options = {}) {
   const exclude = new Set(options.exclude ?? []);
   const rows = [];
