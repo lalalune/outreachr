@@ -15,6 +15,7 @@ import {
   pnpmInvocation,
   repoRoot,
   run,
+  runExecutable,
   sha256File,
   targetId,
   throwCleanupErrors,
@@ -154,16 +155,15 @@ try {
     command: 'pnpm',
     args: ['--filter', '@outreachr/desktop', 'build'],
   });
-  assert.deepEqual(
-    pnpmInvocation(['--filter', '@outreachr/desktop', 'build'], 'win32', {
-      ComSpec: 'C:\\Windows\\System32\\cmd.exe',
-    }),
-    {
-      command: 'C:\\Windows\\System32\\cmd.exe',
-      args: ['/d', '/s', '/c', 'pnpm.cmd --filter @outreachr/desktop build'],
-    },
-  );
-  assert.throws(() => pnpmInvocation(['build & echo unsafe'], 'win32', {}), /Unsafe pnpm argument/);
+  assert.deepEqual(pnpmInvocation(['--filter', '@outreachr/desktop', 'build'], 'win32'), {
+    command: 'cmd.exe',
+    args: ['/d', '/s', '/c', 'pnpm.cmd --filter @outreachr/desktop build'],
+  });
+  assert.throws(() => pnpmInvocation(['build & echo unsafe'], 'win32'), /Unsafe pnpm argument/);
+  await assert.rejects(() => run('sh', ['-c', 'true']), /Unsupported fixed command/);
+  const nodeProbe = await runExecutable(process.execPath, ['--version']);
+  assert.equal(nodeProbe.code, 0);
+  assert.match(nodeProbe.stdout, /^v\d+/u);
   const unsignedPe = Buffer.alloc(528);
   unsignedPe.write('MZ', 0, 'ascii');
   unsignedPe.writeUInt32LE(0x80, 0x3c);
@@ -384,20 +384,18 @@ try {
 
   const generate = path.join(repoRoot, 'scripts', 'generate-checksums.mjs');
   const verify = path.join(repoRoot, 'scripts', 'verify-checksums.mjs');
-  await run(process.execPath, [generate, '--directory', payload]);
-  await run(process.execPath, [verify, '--manifest', path.join(payload, 'SHA256SUMS')]);
+  await run('node', [generate, '--directory', payload]);
+  await run('node', [verify, '--manifest', path.join(payload, 'SHA256SUMS')]);
 
   await fs.writeFile(path.join(payload, 'alpha.txt'), 'tampered\n', 'utf8');
-  const tamperResult = await run(
-    process.execPath,
-    [verify, '--manifest', path.join(payload, 'SHA256SUMS')],
-    { allowFailure: true },
-  );
+  const tamperResult = await run('node', [verify, '--manifest', path.join(payload, 'SHA256SUMS')], {
+    allowFailure: true,
+  });
   assert.notEqual(tamperResult.code, 0, 'tampered artifact must fail checksum verification');
 
   const unsafeManifest = path.join(temporaryRoot, 'unsafe-sums');
   await fs.writeFile(unsafeManifest, `${'0'.repeat(64)}  ../outside\n`, 'utf8');
-  const traversalResult = await run(process.execPath, [verify, '--manifest', unsafeManifest], {
+  const traversalResult = await run('node', [verify, '--manifest', unsafeManifest], {
     allowFailure: true,
   });
   assert.notEqual(
@@ -441,7 +439,7 @@ try {
       )}\n`,
       'utf8',
     );
-    await run(process.execPath, [
+    await run('node', [
       generate,
       '--directory',
       bundle,
@@ -449,7 +447,7 @@ try {
       path.join(bundle, `SHA256SUMS-${target}`),
     ]);
     await run(
-      process.execPath,
+      'node',
       [
         path.join(repoRoot, 'scripts', 'copy-attestation.mjs'),
         '--output',
@@ -462,14 +460,14 @@ try {
   const verifyBundles = path.join(repoRoot, 'scripts', 'verify-release-bundle.mjs');
   const stageBundles = path.join(repoRoot, 'scripts', 'stage-publish-assets.mjs');
   const stagedAssets = path.join(temporaryRoot, 'publish-assets');
-  await run(process.execPath, [verifyBundles, '--directory', releaseAssets]);
-  await run(process.execPath, [stageBundles, '--input', releaseAssets, '--output', stagedAssets]);
+  await run('node', [verifyBundles, '--directory', releaseAssets]);
+  await run('node', [stageBundles, '--input', releaseAssets, '--output', stagedAssets]);
   assert.equal(await fs.readFile(path.join(stagedAssets, 'NOTICE'), 'utf8'), 'test notice\n');
   assert.match(await fs.readFile(path.join(stagedAssets, 'RELEASE-TRUST.md'), 'utf8'), /UNSIGNED/);
   const downloadedAssets = path.join(temporaryRoot, 'downloaded-publish-assets');
   await copyTree(stagedAssets, downloadedAssets);
   const verifyPublishedAssets = path.join(repoRoot, 'scripts', 'verify-published-assets.mjs');
-  await run(process.execPath, [
+  await run('node', [
     verifyPublishedAssets,
     '--expected',
     stagedAssets,
@@ -478,7 +476,7 @@ try {
   ]);
   await fs.writeFile(path.join(downloadedAssets, 'NOTICE'), 'tampered draft asset\n', 'utf8');
   const draftTamperResult = await run(
-    process.execPath,
+    'node',
     [verifyPublishedAssets, '--expected', stagedAssets, '--actual', downloadedAssets],
     { allowFailure: true },
   );
@@ -487,22 +485,18 @@ try {
   const firstBundle = path.join(releaseAssets, 'outreachr-macos-x64');
   const unattested = path.join(firstBundle, 'unattested-extra.txt');
   await fs.writeFile(unattested, 'must fail closed\n', 'utf8');
-  const unattestedResult = await run(
-    process.execPath,
-    [verifyBundles, '--directory', releaseAssets],
-    { allowFailure: true },
-  );
+  const unattestedResult = await run('node', [verifyBundles, '--directory', releaseAssets], {
+    allowFailure: true,
+  });
   assert.notEqual(unattestedResult.code, 0, 'an unchecksummed release asset must be rejected');
   await fs.rm(unattested, { force: true });
 
   const firstChecksum = path.join(firstBundle, 'SHA256SUMS-macos-x64');
   const originalChecksums = await fs.readFile(firstChecksum, 'utf8');
   await fs.appendFile(firstChecksum, originalChecksums.split(/\r?\n/)[0] + '\n', 'utf8');
-  const duplicateResult = await run(
-    process.execPath,
-    [verifyBundles, '--directory', releaseAssets],
-    { allowFailure: true },
-  );
+  const duplicateResult = await run('node', [verifyBundles, '--directory', releaseAssets], {
+    allowFailure: true,
+  });
   assert.notEqual(duplicateResult.code, 0, 'duplicate checksum subjects must be rejected');
   await fs.writeFile(firstChecksum, originalChecksums, 'utf8');
 
@@ -518,7 +512,7 @@ try {
     );
   }
   const collisionResult = await run(
-    process.execPath,
+    'node',
     [
       path.join(repoRoot, 'scripts', 'collect-release-artifacts.mjs'),
       '--release-dir',

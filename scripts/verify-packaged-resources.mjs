@@ -10,6 +10,7 @@ import {
   readJson,
   repoRoot,
   run,
+  runExecutable,
   runWindowsPowerShell,
   sha256File,
   walkFiles,
@@ -68,7 +69,10 @@ for (const appArchive of appArchives) {
     const executable = safeResourcePath(payloadRoot, sidecar.executable);
     if (!(await exists(executable)))
       throw new Error(`Missing ${sidecar.id} executable at ${executable}`);
-    const smoke = await run(executable, ['--version'], { allowFailure: true, timeoutMs: 30_000 });
+    const smoke = await runExecutable(executable, ['--version'], {
+      allowFailure: true,
+      timeoutMs: 30_000,
+    });
     if (smoke.code !== 0 || smoke.timedOut) {
       throw new Error(`${sidecar.id} packaged executable failed --version: ${smoke.stderr}`);
     }

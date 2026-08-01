@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -248,6 +248,28 @@ export function nsisUninstallArgs(installRoot) {
 }
 
 export async function run(command, args = [], options = {}) {
+  return await runSpawned(command, args, options, (spawnOptions) =>
+    spawnKnownCommand(command, args, spawnOptions),
+  );
+}
+
+/** Execute an already-materialized absolute binary without consulting a shell or PATH. */
+export async function runExecutable(executable, args = [], options = {}) {
+  if (typeof executable !== 'string' || !path.isAbsolute(executable)) {
+    throw new Error(`Executable path must be absolute: ${executable}`);
+  }
+  const command = await fs.realpath(executable);
+  const stat = await fs.stat(command);
+  if (!stat.isFile()) throw new Error(`Executable path is not a file: ${command}`);
+  if (process.platform !== 'win32' && (stat.mode & 0o111) === 0) {
+    throw new Error(`Executable path is not marked executable: ${command}`);
+  }
+  return await runSpawned(command, args, options, (spawnOptions) =>
+    spawn(command, args, spawnOptions),
+  );
+}
+
+async function runSpawned(command, args, options, start) {
   const {
     cwd = repoRoot,
     env = process.env,
@@ -257,11 +279,7 @@ export async function run(command, args = [], options = {}) {
     sensitive = false,
   } = options;
   return await new Promise((resolve, reject) => {
-    const child = execFile(command, args, {
-      cwd,
-      env,
-      windowsHide: true,
-    });
+    const child = start({ cwd, env, windowsHide: true });
     let stdout = '';
     let stderr = '';
     if (capture) {
@@ -302,6 +320,47 @@ export async function run(command, args = [], options = {}) {
       }
     });
   });
+}
+
+function spawnKnownCommand(command, args, options) {
+  switch (command) {
+    case 'cmd.exe':
+      return spawn('cmd.exe', args, options);
+    case 'codesign':
+      return spawn('codesign', args, options);
+    case 'ditto':
+      return spawn('ditto', args, options);
+    case 'dpkg':
+      return spawn('dpkg', args, options);
+    case 'dpkg-deb':
+      return spawn('dpkg-deb', args, options);
+    case 'dpkg-query':
+      return spawn('dpkg-query', args, options);
+    case 'gh':
+      return spawn('gh', args, options);
+    case 'git':
+      return spawn('git', args, options);
+    case 'gpg':
+      return spawn('gpg', args, options);
+    case 'hdiutil':
+      return spawn('hdiutil', args, options);
+    case 'node':
+      return spawn('node', args, options);
+    case 'pnpm':
+      return spawn('pnpm', args, options);
+    case 'powershell.exe':
+      return spawn('powershell.exe', args, options);
+    case 'pwsh.exe':
+      return spawn('pwsh.exe', args, options);
+    case 'spctl':
+      return spawn('spctl', args, options);
+    case 'sudo':
+      return spawn('sudo', args, options);
+    case 'xcrun':
+      return spawn('xcrun', args, options);
+    default:
+      throw new Error(`Unsupported fixed command: ${command}`);
+  }
 }
 
 async function executableKind(target) {
@@ -460,7 +519,7 @@ async function canonicalizeMachOLinkedit(target) {
   }
 }
 
-export function pnpmInvocation(args = [], platform = process.platform, environment = process.env) {
+export function pnpmInvocation(args = [], platform = process.platform) {
   if (platform !== 'win32') return { command: 'pnpm', args };
   for (const argument of args) {
     if (!/^[A-Za-z0-9@./:_=+-]+$/.test(argument)) {
@@ -468,7 +527,7 @@ export function pnpmInvocation(args = [], platform = process.platform, environme
     }
   }
   return {
-    command: environment.ComSpec || environment.COMSPEC || 'cmd.exe',
+    command: 'cmd.exe',
     args: ['/d', '/s', '/c', ['pnpm.cmd', ...args].join(' ')],
   };
 }

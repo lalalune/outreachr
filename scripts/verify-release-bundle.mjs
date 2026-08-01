@@ -41,7 +41,7 @@ for (const target of targets) {
       throw new Error(`${target} is missing ${required}`);
   }
   await run(
-    process.execPath,
+    'node',
     [
       path.join(repoRoot, 'scripts', 'verify-checksums.mjs'),
       '--manifest',
@@ -52,7 +52,7 @@ for (const target of targets) {
     },
   );
   await run(
-    process.execPath,
+    'node',
     [
       path.join(repoRoot, 'scripts', 'verify-checksums.mjs'),
       '--manifest',

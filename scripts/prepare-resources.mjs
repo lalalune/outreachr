@@ -10,7 +10,7 @@ import {
   normalizeSignableTree,
   readJson,
   repoRoot,
-  run,
+  runExecutable,
   targetTriple,
   writeJson,
 } from './_lib.mjs';
@@ -86,7 +86,10 @@ async function prepareClaude() {
   const destination = path.join(generatedRoot, ...relativeExecutable.split('/'));
   await copyTree(source, destination);
   if (process.platform !== 'win32') await fs.chmod(destination, 0o755);
-  const smoke = await run(destination, ['--version'], { timeoutMs: 30_000, allowFailure: true });
+  const smoke = await runExecutable(destination, ['--version'], {
+    timeoutMs: 30_000,
+    allowFailure: true,
+  });
   if (smoke.code !== 0 || smoke.timedOut)
     throw new Error(`Claude sidecar failed --version: ${smoke.stderr}`);
   if (!preserveVendorSignatures) await normalizeSignableTree(path.dirname(destination));
@@ -129,7 +132,10 @@ async function prepareCodex() {
   if (!(await exists(executable)))
     throw new Error(`Codex sidecar executable is missing at ${executable}`);
   if (process.platform !== 'win32') await fs.chmod(executable, 0o755);
-  const smoke = await run(executable, ['--version'], { timeoutMs: 30_000, allowFailure: true });
+  const smoke = await runExecutable(executable, ['--version'], {
+    timeoutMs: 30_000,
+    allowFailure: true,
+  });
   if (smoke.code !== 0 || smoke.timedOut)
     throw new Error(`Codex sidecar failed --version: ${smoke.stderr}`);
   if (!preserveVendorSignatures) await normalizeSignableTree(destination);
