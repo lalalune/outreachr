@@ -24,16 +24,24 @@ These controls are defense in depth. The host should use a new, empty directory 
 
 The ChatGPT browser callback is hosted locally by `codex app-server`; token refresh and logout are also owned by Codex. See the official [Codex authentication guide](https://learn.chatgpt.com/docs/auth) and [app-server protocol](https://learn.chatgpt.com/docs/app-server).
 
-## Claude setup (founder-controlled API key only)
+## Claude setup (API key or explicitly approved subscription access)
 
-Outreachr does **not** embed a Claude.ai login page, proxy credentials, or route Claude Free/Pro/Max subscription authentication. Anthropic's current third-party Agent SDK guidance requires an API key or supported cloud-provider credentials. The v0.1 desktop integration therefore fails closed on independently authenticated Claude Code subscriptions and `CLAUDE_CODE_OAUTH_TOKEN` setup tokens.
+Claude authentication is API-key-only by default. Outreachr does **not** embed a Claude.ai login page, proxy credentials, or accept `CLAUDE_CODE_OAUTH_TOKEN` setup tokens.
 
 - Create an API key in the [Anthropic Console](https://console.anthropic.com/settings/keys).
 - In Outreachr, open **Settings → Agents**, paste the key into the write-only password field, and save it. The desktop host encrypts the value with the operating-system credential facility before storing only ciphertext in the local vault; the renderer cannot read it back and clears the field after every attempt.
-- `ANTHROPIC_API_KEY` remains an optional founder-controlled launch-environment override for developers. The adapter strips `CLAUDE_CODE_OAUTH_TOKEN` and unrelated secrets from every child environment.
+- `ANTHROPIC_API_KEY` remains an optional founder-controlled launch-environment override for developers. API-key mode passes that key and strips `CLAUDE_CODE_OAUTH_TOKEN` and unrelated secrets from every child environment.
 - Removing the saved key clears the in-memory adapter immediately after the encrypted vault update succeeds. Outreachr never logs, exports, contributes, or returns the plaintext key.
 
-This package does not represent blanket Anthropic approval and is not legal advice. Review Anthropic's current [authentication guide](https://code.claude.com/docs/en/authentication) and [legal/compliance guide](https://code.claude.com/docs/en/legal-and-compliance) before distribution; if those terms change, update the fail-closed policy and tests before enabling another authentication mode.
+If Anthropic has approved this third-party integration, the founder can explicitly enable the separate approved-subscription mode:
+
+1. Run `claude auth login --claudeai` in a local terminal and complete the official Claude Code sign-in.
+2. Enable **Anthropic-approved subscription authentication** in Outreachr, then detect Claude again.
+3. Outreachr relies on the official local Claude Code keychain/config session. It does not receive, persist, export, or log the session token, and it never logs out or otherwise changes the founder's independent Claude Code session.
+
+The two modes are mutually exclusive at runtime. Approved-subscription mode strips both `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`; switching back restores the locally saved API key without exposing it to the renderer. Authentication mode and credentials cannot change during an active run. All proposal-only tool restrictions are identical in both modes.
+
+This opt-in does not represent blanket Anthropic approval and is not legal advice. Review Anthropic's current [authentication guide](https://code.claude.com/docs/en/authentication), [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview), and [legal/compliance guide](https://code.claude.com/docs/en/legal-and-compliance) before distribution; if those terms or an integration's approval change, disable the setting and update the fail-closed policy and tests.
 
 ## Minimal host usage
 

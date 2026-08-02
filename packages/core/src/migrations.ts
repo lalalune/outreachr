@@ -1,6 +1,6 @@
 import type { Database } from 'sql.js';
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 export interface Migration {
   readonly version: number;
@@ -1128,6 +1128,17 @@ ALTER TABLE targets ADD COLUMN disposition TEXT
 -- arbitrary founder notes.
 UPDATE targets SET disposition='not_now'
 WHERE stage='passed' AND owner_note='Not now';
+`,
+  },
+  {
+    version: 9,
+    name: 'device_local_preferences',
+    sql: `
+CREATE TABLE local_preferences (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `,
   },
 ] as const;

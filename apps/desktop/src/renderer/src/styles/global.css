@@ -4363,6 +4363,32 @@ kbd {
   border-radius: var(--radius-sm);
 }
 
+.agent-auth-form {
+  display: flex;
+  max-width: 620px;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.agent-auth-form legend {
+  padding: 0 var(--space-2);
+  color: var(--ink-strong);
+  font-weight: 700;
+}
+
+.agent-auth-form > p {
+  margin: 0;
+}
+
+.agent-auth-form > .setup-diagnostic {
+  margin-bottom: 0;
+}
+
 .agent-credential-form > .setup-diagnostic {
   margin-bottom: 0;
 }

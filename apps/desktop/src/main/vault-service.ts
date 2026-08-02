@@ -296,6 +296,7 @@ const DEFAULT_AGENTS: AgentStatus[] = [
     version: null,
     accountLabel: null,
     mode: 'embedded',
+    subscriptionAuthApproved: false,
     error: null,
   },
   {
@@ -304,6 +305,7 @@ const DEFAULT_AGENTS: AgentStatus[] = [
     version: null,
     accountLabel: null,
     mode: 'embedded',
+    subscriptionAuthApproved: false,
     error: null,
   },
 ];

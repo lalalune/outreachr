@@ -161,14 +161,18 @@ describe('credential setup guidance and renderer boundary', () => {
 
     expect(await screen.findByRole('heading', { name: 'Local agents' })).toBeVisible();
     const agents = section('Local agents');
-    expect(
-      within(agents).getByText(/does not accept Claude subscription or setup-token/u),
-    ).toBeVisible();
+    expect(within(agents).getByText(/API-key authentication is the default/u)).toBeVisible();
     fireEvent.click(within(agents).getByRole('button', { name: 'Codex authentication' }));
     expect(bridge.openExternal).toHaveBeenCalledWith('https://learn.chatgpt.com/docs/auth');
     fireEvent.click(within(agents).getByRole('button', { name: 'Anthropic legal guidance' }));
     expect(bridge.openExternal).toHaveBeenCalledWith(
       'https://code.claude.com/docs/en/legal-and-compliance',
+    );
+    fireEvent.click(
+      within(agents).getByRole('button', { name: 'Agent SDK authentication policy' }),
+    );
+    expect(bridge.openExternal).toHaveBeenCalledWith(
+      'https://code.claude.com/docs/en/agent-sdk/overview',
     );
 
     const key = 'sk-ant-founder-owned-test-key-00000001';
@@ -195,6 +199,88 @@ describe('credential setup guidance and renderer boundary', () => {
     );
   });
 
+  it('requires founder confirmation before enabling approved Claude subscription access', async () => {
+    const fixture = bootstrapFixture();
+    const enabled = {
+      ...fixture.agents[1]!,
+      state: 'signed_out' as const,
+      subscriptionAuthApproved: true,
+      error: 'Run claude auth login --claudeai in a terminal, then select Detect.',
+    };
+    const command = vi.fn(async (name: string) => {
+      if (name === 'agent.subscription.set') return enabled;
+      throw new Error(`Unexpected command: ${name}`);
+    });
+    installBridge(fixture, command as never);
+    renderSettings('#/settings/agents');
+
+    await screen.findByRole('heading', { name: 'Local agents' });
+    const agents = section('Local agents');
+    expect(
+      within(agents).getByText(/never asks for, copies, stores, returns, or logs/u),
+    ).toBeVisible();
+    expect(within(agents).getByText(/separate Agent SDK credit/u)).toBeVisible();
+    const enable = within(agents).getByRole('button', { name: 'Enable subscription access' });
+    expect(enable).toBeDisabled();
+    fireEvent.click(
+      within(agents).getByRole('checkbox', {
+        name: /I confirm Anthropic approved this Outreachr deployment/u,
+      }),
+    );
+    expect(enable).toBeEnabled();
+    fireEvent.click(enable);
+
+    await waitFor(() =>
+      expect(command).toHaveBeenCalledWith('agent.subscription.set', {
+        provider: 'claude',
+        approved: true,
+        approvalConfirmed: true,
+      }),
+    );
+    const serializedCalls = JSON.stringify(command.mock.calls);
+    expect(serializedCalls).not.toContain('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(serializedCalls).not.toContain('ANTHROPIC_API_KEY');
+  });
+
+  it('shows official sign-in guidance and can disable subscription access without global logout', async () => {
+    const fixture = bootstrapFixture();
+    fixture.agents[1] = {
+      ...fixture.agents[1]!,
+      state: 'signed_out',
+      subscriptionAuthApproved: true,
+      error: 'Run claude auth login --claudeai in a terminal, then select Detect.',
+    };
+    const disabled = {
+      ...fixture.agents[1],
+      subscriptionAuthApproved: false,
+      error: null,
+    };
+    const command = vi.fn(async (name: string) => {
+      if (name === 'agent.login') return fixture.agents[1]!;
+      if (name === 'agent.subscription.set') return disabled;
+      throw new Error(`Unexpected command: ${name}`);
+    });
+    installBridge(fixture, command as never);
+    renderSettings('#/settings/agents');
+
+    await screen.findByRole('heading', { name: 'Local agents' });
+    const agents = section('Local agents');
+    expect(within(agents).getByText('Subscription enabled by founder')).toBeVisible();
+    expect(within(agents).getAllByText(/claude auth login --claudeai/u).length).toBeGreaterThan(0);
+    fireEvent.click(within(agents).getByRole('button', { name: 'Show sign-in command' }));
+    await waitFor(() =>
+      expect(command).toHaveBeenCalledWith('agent.login', { provider: 'claude' }),
+    );
+    fireEvent.click(within(agents).getByRole('button', { name: 'Disable subscription access' }));
+    await waitFor(() =>
+      expect(command).toHaveBeenCalledWith('agent.subscription.set', {
+        provider: 'claude',
+        approved: false,
+      }),
+    );
+    expect(command.mock.calls.some(([name]) => name === 'agent.logout')).toBe(false);
+  });
+
   it('blocks Claude key entry when protected credential storage is unavailable', async () => {
     const fixture = bootstrapFixture();
     fixture.connectors = fixture.connectors.map((connector) => ({
@@ -203,7 +289,8 @@ describe('credential setup guidance and renderer boundary', () => {
     }));
     fixture.agents[1] = {
       ...fixture.agents[1]!,
-      error: 'Claude subscription credentials were detected but are not used.',
+      error:
+        'Claude subscription credentials were detected but are not used. Enable Anthropic-approved subscription authentication only if Anthropic has approved this third-party integration, or configure an API key.',
     };
     installBridge(fixture);
     renderSettings('#/settings/agents');
@@ -215,7 +302,7 @@ describe('credential setup guidance and renderer boundary', () => {
     expect(within(agents).getByPlaceholderText('Paste a founder-owned API key')).toBeDisabled();
     expect(within(agents).getByRole('button', { name: 'Save encrypted API key' })).toBeDisabled();
     expect(
-      within(agents).getByText('Claude subscription credentials were detected but are not used.'),
+      within(agents).getByText(/Claude subscription credentials were detected but are not used/u),
     ).toBeVisible();
   });
 });

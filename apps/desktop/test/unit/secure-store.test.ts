@@ -56,6 +56,26 @@ describe('SecureStore', () => {
     expect(Number(vault.scalar('SELECT COUNT(*) FROM secure_secrets'))).toBe(0);
   });
 
+  it('stores non-secret local preferences in SQLite without depending on the secret backend', () => {
+    backend.available = false;
+    backend.backend = 'basic_text';
+    backend.reason = 'Linux basic_text is insecure';
+
+    store.setPreference('agent/claude/subscription-approval', {
+      approved: true,
+      confirmedAt: '2026-08-01T18:00:00.000Z',
+    });
+    expect(store.getPreference('agent/claude/subscription-approval')).toEqual({
+      approved: true,
+      confirmedAt: '2026-08-01T18:00:00.000Z',
+    });
+    expect(Number(vault.scalar('SELECT COUNT(*) FROM local_preferences'))).toBe(1);
+
+    store.deletePreference('agent/claude/subscription-approval');
+    expect(store.getPreference('agent/claude/subscription-approval')).toBeNull();
+    expect(() => store.setPreference('../escape', true)).toThrow('Invalid local-preference key');
+  });
+
   it('fails closed on decrypt after a previously available backend becomes locked', async () => {
     await store.set('oauth/google/tokens', { accessToken: 'encrypted' });
     backend.available = false;

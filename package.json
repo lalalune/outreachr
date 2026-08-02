@@ -1,6 +1,6 @@
 {
   "name": "outreachr",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "A local-first, evidence-backed fundraising operating system for founders.",
   "author": "Outreachr contributors",
@@ -42,6 +42,7 @@
     "test:e2e:headed": "pnpm --filter @outreachr/desktop test:e2e:headed",
     "presmoke:codex": "pnpm build:packages",
     "smoke:codex": "pnpm prepare:live-agents && pnpm --filter @outreachr/desktop build && pnpm --filter @outreachr/desktop exec node scripts/smoke-codex-subscription.mjs",
+    "smoke:claude": "pnpm build:packages && node scripts/smoke-claude-subscription.mjs",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "prepare:runtime": "node scripts/prepare-runtime-resources.mjs",
     "prepare:live-agents": "node scripts/prepare-live-agent-resources.mjs",
@@ -50,6 +51,7 @@
     "package:mac": "pnpm prepare:resources && pnpm --filter @outreachr/desktop package:mac",
     "package:win": "pnpm prepare:resources && pnpm --filter @outreachr/desktop package:win",
     "package:linux": "pnpm prepare:resources && pnpm --filter @outreachr/desktop package:linux",
+    "release:mac:local": "node scripts/package-signed-target.mjs --local-keychain --platform darwin",
     "release:verify": "node scripts/verify-release.mjs",
     "licenses": "node scripts/generate-third-party-notices.mjs"
   },

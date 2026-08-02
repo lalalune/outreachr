@@ -1,7 +1,7 @@
 {
   "name": "@outreachr/agents",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Fail-closed, proposal-only local Codex and Claude agent runtime for Outreachr",
   "license": "Apache-2.0",
   "type": "module",

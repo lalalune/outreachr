@@ -371,10 +371,10 @@ export function OnboardingFlow(): React.JSX.Element {
                   <Sparkles aria-hidden="true" />
                   <p>
                     Agents are optional. Settings → Agents supports Codex through official ChatGPT
-                    sign-in. Claude requires a founder-provided Anthropic API key under Anthropic's
-                    current third-party integration rules; save it in Settings, where Outreachr
-                    encrypts it with the operating-system credential facility. Claude subscription
-                    and setup-token credentials are rejected.
+                    sign-in. Claude can use a founder-provided Anthropic API key or, when Anthropic
+                    has approved this deployment, an existing local Claude subscription sign-in that
+                    the founder explicitly enables. Outreachr never receives the subscription token,
+                    and setup-token credentials remain unsupported.
                   </p>
                 </div>
               </div>

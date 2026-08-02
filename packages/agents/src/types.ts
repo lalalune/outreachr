@@ -151,6 +151,11 @@ export interface ProviderDetection {
   readonly accountLabel?: string;
   readonly plan?: string;
   readonly detail?: string;
+  /**
+   * Claude only: true when the founder has explicitly enabled an
+   * Anthropic-approved third-party subscription-authentication path.
+   */
+  readonly subscriptionAuthApproved?: boolean;
 }
 
 export type LoginMode = 'browser' | 'device-code' | 'official-cli' | 'setup-token' | 'api-key';

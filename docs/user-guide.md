@@ -89,7 +89,7 @@ Documents are founder-controlled links or references to local files. Outreachr s
 
 ## Local agents
 
-Outreachr runs bundled local Codex and Claude agent sidecars. Codex uses the official CLI's existing ChatGPT sign-in; Claude uses a founder-entered Anthropic API key stored as operating-system-encrypted ciphertext in the local SQLite vault. A run receives only the checked data classes plus any explicit, revocable durable grants. Agents can research, summarize, and produce structured proposals, but they cannot directly send email, mutate arbitrary files, execute shell commands through Outreachr tools, or bypass founder approval.
+Outreachr runs bundled local Codex and Claude agent sidecars. Codex uses the official CLI's existing ChatGPT sign-in. Claude can use a founder-entered Anthropic API key stored as operating-system-encrypted ciphertext, or an existing official local Claude subscription session after the founder confirms Anthropic approved that deployment and explicitly enables it. Outreachr never receives or stores the subscription token, and the modes are mutually exclusive at runtime. A run receives only the checked data classes plus any explicit, revocable durable grants. Agents can research, summarize, and produce structured proposals, but they cannot directly send email, mutate arbitrary files, execute shell commands through Outreachr tools, or bypass founder approval.
 
 ## Backup, restore, import, and contribution
 

@@ -354,6 +354,8 @@ function spawnKnownCommand(command, args, options) {
       return spawn('powershell.exe', args, options);
     case 'pwsh.exe':
       return spawn('pwsh.exe', args, options);
+    case 'security':
+      return spawn('security', args, options);
     case 'spctl':
       return spawn('spctl', args, options);
     case 'sudo':

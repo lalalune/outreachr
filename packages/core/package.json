@@ -1,7 +1,7 @@
 {
   "name": "@outreachr/core",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local-first SQLite domain and data layer for Outreachr",
   "type": "module",
   "sideEffects": false,

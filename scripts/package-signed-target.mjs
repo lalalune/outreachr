@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import {
+  localKeychainSigningConfiguration,
+  notarytoolCredentialArgs,
+  preflightLocalDeveloperId,
+} from './apple-signing.mjs';
 import { materializeSigningAssets } from './materialize-signing-assets.mjs';
 import { parseArgs, repoRoot, run, runPnpm, targetId, walkFiles } from './_lib.mjs';
 
@@ -9,12 +14,24 @@ if (!['darwin', 'win32'].includes(process.platform)) {
 }
 
 const args = parseArgs();
+if ('local-keychain' in args && args['local-keychain'] !== true) {
+  throw new Error('--local-keychain is a flag and does not accept a value');
+}
+const signingSource = args['local-keychain'] === true ? 'local-keychain' : 'portable';
+if (signingSource === 'local-keychain' && process.platform !== 'darwin') {
+  throw new Error('Local Keychain signing mode is only available on macOS');
+}
 const expectedPlatform = String(args.platform ?? process.platform);
 const expectedArch = String(args.arch ?? process.arch);
 if (process.platform !== expectedPlatform || process.arch !== expectedArch) {
   throw new Error(
     `Refusing a non-native signed package: running ${process.platform}-${process.arch}, requested ${expectedPlatform}-${expectedArch}`,
   );
+}
+let localIdentity;
+if (signingSource === 'local-keychain') {
+  const configuration = localKeychainSigningConfiguration(process.env);
+  localIdentity = await preflightLocalDeveloperId(configuration);
 }
 await fs.rm(path.join(repoRoot, 'apps', 'desktop', 'release'), {
   recursive: true,
@@ -26,8 +43,9 @@ await runPnpm(['--filter', '@outreachr/desktop...', 'build'], {
   capture: false,
 });
 
-const assets = await materializeSigningAssets();
+const assets = await materializeSigningAssets({ source: signingSource });
 try {
+  if (localIdentity) assets.environment.CSC_NAME = localIdentity.fingerprint;
   const platformFlag = process.platform === 'darwin' ? '--mac' : '--win';
   const platformTargets = process.platform === 'darwin' ? ['dmg', 'zip'] : ['nsis'];
   const builderArgs = [
@@ -43,6 +61,7 @@ try {
   ];
   if (process.platform === 'darwin') {
     builderArgs.push('--config.mac.notarize=true', '--config.dmg.sign=true');
+    if (signingSource === 'local-keychain') builderArgs.push('--config.forceCodeSigning=true');
   }
   await runPnpm(builderArgs, {
     capture: false,
@@ -54,7 +73,9 @@ try {
 }
 
 console.log(
-  `Signed ${targetId()} package build completed and temporary certificate/key files were removed.`,
+  signingSource === 'local-keychain'
+    ? `Signed ${targetId()} package build completed without exporting the local Keychain identity.`
+    : `Signed ${targetId()} package build completed and temporary certificate/key files were removed.`,
 );
 
 async function notarizeDiskImages(signingEnvironment) {
@@ -65,23 +86,7 @@ async function notarizeDiskImages(signingEnvironment) {
   if (diskImages.length !== 1) {
     throw new Error(`Expected one signed DMG for notarization, found ${diskImages.length}`);
   }
-  const credentials = signingEnvironment.APPLE_API_KEY
-    ? [
-        '--key',
-        signingEnvironment.APPLE_API_KEY,
-        '--key-id',
-        signingEnvironment.APPLE_API_KEY_ID,
-        '--issuer',
-        signingEnvironment.APPLE_API_ISSUER,
-      ]
-    : [
-        '--apple-id',
-        signingEnvironment.APPLE_ID,
-        '--password',
-        signingEnvironment.APPLE_APP_SPECIFIC_PASSWORD,
-        '--team-id',
-        signingEnvironment.APPLE_TEAM_ID,
-      ];
+  const credentials = notarytoolCredentialArgs(signingEnvironment);
   await run('xcrun', ['notarytool', 'submit', diskImages[0], '--wait', ...credentials], {
     capture: false,
     env: { ...process.env, ...signingEnvironment },

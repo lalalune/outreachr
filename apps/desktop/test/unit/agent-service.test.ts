@@ -41,11 +41,13 @@ interface FakeRuntime {
 interface FakeAdapter {
   provider: 'codex' | 'claude';
   apiKeyUpdates: Array<string | null>;
+  subscriptionAuthUpdates: boolean[];
   options: {
     workspaceDirectory: string;
     executable: string;
     environment?: NodeJS.ProcessEnv;
     mcpBearerToken?: string;
+    allowSubscriptionAuth?: boolean;
   };
 }
 
@@ -64,6 +66,7 @@ vi.mock('@outreachr/agents', () => {
     readonly provider: 'codex' | 'claude';
     readonly options: FakeAdapter['options'];
     readonly apiKeyUpdates: Array<string | null> = [];
+    readonly subscriptionAuthUpdates: boolean[] = [];
 
     constructor(provider: 'codex' | 'claude', options: FakeAdapter['options']) {
       this.provider = provider;
@@ -73,6 +76,10 @@ vi.mock('@outreachr/agents', () => {
 
     setApiKey(value: string | null): void {
       this.apiKeyUpdates.push(value);
+    }
+
+    setSubscriptionAuthApproved(approved: boolean): void {
+      this.subscriptionAuthUpdates.push(approved);
     }
   }
 
@@ -98,6 +105,7 @@ vi.mock('@outreachr/agents', () => {
         authSource: 'chatgpt',
         version: 'codex-test',
         accountLabel: 'ChatGPT test account',
+        subscriptionAuthApproved: false,
       },
       {
         provider: 'claude',
@@ -105,6 +113,7 @@ vi.mock('@outreachr/agents', () => {
         authenticated: false,
         authSource: 'none',
         version: 'claude-test',
+        subscriptionAuthApproved: false,
       },
     ];
     detectAllResult: Promise<ProviderDetection[]> | null = null;
@@ -261,7 +270,9 @@ describe('DesktopAgentService', () => {
     await Promise.all(directories.splice(0).map(removeTemporaryDirectory));
   });
 
-  async function fixture(options: { storedApiKey?: string } = {}): Promise<{
+  async function fixture(
+    options: { storedApiKey?: string; subscriptionApproved?: boolean } = {},
+  ): Promise<{
     service: DesktopAgentService;
     openExternal: ReturnType<typeof vi.fn>;
     mcp: FakeMcpController;
@@ -270,6 +281,11 @@ describe('DesktopAgentService', () => {
       get: ReturnType<typeof vi.fn>;
       set: ReturnType<typeof vi.fn>;
       delete: ReturnType<typeof vi.fn>;
+    };
+    preferenceStore: {
+      getPreference: ReturnType<typeof vi.fn>;
+      setPreference: ReturnType<typeof vi.fn>;
+      deletePreference: ReturnType<typeof vi.fn>;
     };
     persistVault: ReturnType<typeof vi.fn>;
   }> {
@@ -280,6 +296,13 @@ describe('DesktopAgentService', () => {
     if (options.storedApiKey) {
       storedCredentials.set('agent/claude/api-key', { apiKey: options.storedApiKey });
     }
+    const storedPreferences = new Map<string, unknown>();
+    if (options.subscriptionApproved) {
+      storedPreferences.set('agent/claude/subscription-approval', {
+        approved: true,
+        confirmedAt: '2026-08-01T18:00:00.000Z',
+      });
+    }
     const credentialStore = {
       status: vi.fn(async () => ({ available: true })),
       get: vi.fn(async (key: string) => storedCredentials.get(key) ?? null),
@@ -288,6 +311,15 @@ describe('DesktopAgentService', () => {
       }),
       delete: vi.fn((key: string) => {
         storedCredentials.delete(key);
+      }),
+    };
+    const preferenceStore = {
+      getPreference: vi.fn((key: string) => storedPreferences.get(key) ?? null),
+      setPreference: vi.fn((key: string, value: unknown) => {
+        storedPreferences.set(key, value);
+      }),
+      deletePreference: vi.fn((key: string) => {
+        storedPreferences.delete(key);
       }),
     };
     const persistVault = vi.fn(async () => undefined);
@@ -321,9 +353,10 @@ describe('DesktopAgentService', () => {
       openExternal,
       mcp,
       credentialStore,
+      preferenceStore,
       persistVault,
     });
-    return { service, openExternal, mcp, credentialStore, persistVault };
+    return { service, openExternal, mcp, credentialStore, preferenceStore, persistVault };
   }
 
   it('uses API-key authentication safely and maps detection/login/logout states', async () => {
@@ -342,6 +375,7 @@ describe('DesktopAgentService', () => {
       ANTHROPIC_API_KEY: 'founder-controlled-api-key',
     });
     expect(claude?.options.environment).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(claude?.options.allowSubscriptionAuth).toBe(false);
 
     const fake = runtime();
     fake.detections = [
@@ -368,6 +402,7 @@ describe('DesktopAgentService', () => {
         version: null,
         accountLabel: null,
         mode: 'embedded',
+        subscriptionAuthApproved: false,
         error: 'Codex sidecar not found',
       },
       {
@@ -376,6 +411,7 @@ describe('DesktopAgentService', () => {
         version: '1.2.3',
         accountLabel: 'Claude subscription',
         mode: 'embedded',
+        subscriptionAuthApproved: false,
         error: null,
       },
     ]);
@@ -442,6 +478,145 @@ describe('DesktopAgentService', () => {
     expect(claude.apiKeyUpdates).toEqual([replacementKey, null]);
     expect(JSON.stringify(removed)).not.toContain(storedKey);
     expect(persistVault).toHaveBeenCalledTimes(2);
+  });
+
+  it('persists explicit approved subscription mode and keeps it separate from API-key mode', async () => {
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete process.env.ANTHROPIC_API_KEY;
+    const storedKey = 'sk-ant-encrypted-fallback-credential-0001';
+    const { service, preferenceStore, persistVault } = await fixture({
+      storedApiKey: storedKey,
+      subscriptionApproved: true,
+    });
+    const claude = adapters().find((adapter) => adapter.provider === 'claude')!;
+    expect(claude.options.allowSubscriptionAuth).toBe(true);
+    expect(claude.options.environment?.ANTHROPIC_API_KEY).toBe(storedKey);
+    expect(claude.options.environment).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+
+    const fake = runtime();
+    fake.detections[1] = {
+      provider: 'claude',
+      installed: true,
+      authenticated: true,
+      authSource: 'claude-code',
+      version: '2.1.220',
+      accountLabel: 'founder@example.test',
+      plan: 'Max',
+      subscriptionAuthApproved: true,
+    };
+    fake.loginChallenge = {
+      provider: 'claude',
+      kind: 'external-command',
+      command: 'claude auth login --claudeai',
+      instructions: 'Run the official Claude sign-in command, then select Detect.',
+    };
+    await expect(service.login('claude')).resolves.toMatchObject({
+      provider: 'claude',
+      state: 'ready',
+      subscriptionAuthApproved: true,
+    });
+    expect(fake.loginRequests.at(-1)).toEqual({ provider: 'claude', mode: 'official-cli' });
+
+    fake.detections[1] = {
+      ...fake.detections[1]!,
+      authenticated: false,
+      authSource: 'none',
+      subscriptionAuthApproved: false,
+    };
+    await expect(service.setSubscriptionAuthApproved('claude', false)).resolves.toMatchObject({
+      subscriptionAuthApproved: false,
+    });
+    expect(preferenceStore.deletePreference).toHaveBeenCalledWith(
+      'agent/claude/subscription-approval',
+    );
+    expect(claude.subscriptionAuthUpdates).toEqual([false]);
+
+    fake.detections[1] = {
+      ...fake.detections[1]!,
+      authenticated: true,
+      authSource: 'claude-code',
+      subscriptionAuthApproved: true,
+    };
+    await expect(service.setSubscriptionAuthApproved('claude', true)).resolves.toMatchObject({
+      subscriptionAuthApproved: true,
+    });
+    expect(preferenceStore.setPreference).toHaveBeenCalledWith(
+      'agent/claude/subscription-approval',
+      expect.objectContaining({ approved: true, confirmedAt: expect.any(String) }),
+    );
+    expect(claude.subscriptionAuthUpdates).toEqual([false, true]);
+    expect(persistVault).toHaveBeenCalledTimes(2);
+  });
+
+  it('rehydrates both Claude authentication modes from a replacement backup vault', async () => {
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete process.env.ANTHROPIC_API_KEY;
+    const oldKey = 'sk-ant-before-restore-credential-000001';
+    const restoredKey = 'sk-ant-restored-credential-00000002';
+    const { service, credentialStore, preferenceStore } = await fixture({
+      storedApiKey: oldKey,
+      subscriptionApproved: true,
+    });
+    const claude = adapters().find((adapter) => adapter.provider === 'claude')!;
+    const fake = runtime();
+
+    preferenceStore.getPreference.mockReturnValue(null);
+    credentialStore.get.mockResolvedValue(null);
+    fake.detections[1] = {
+      provider: 'claude',
+      installed: true,
+      authenticated: false,
+      authSource: 'none',
+      version: 'claude-restored-disabled',
+      subscriptionAuthApproved: false,
+    };
+    const releaseDisabledRestore = service.beginVaultRestore();
+    await expect(
+      service.run({
+        runId: 'run:during-restore',
+        provider: 'claude',
+        prompt: 'This must not start.',
+        disclosedContextIds: [],
+        context: {},
+        onEvent: vi.fn(),
+      }),
+    ).rejects.toThrow('cannot start while a backup restore is in progress');
+    await expect(service.reloadAfterVaultRestore()).resolves.toContainEqual(
+      expect.objectContaining({
+        provider: 'claude',
+        state: 'signed_out',
+        subscriptionAuthApproved: false,
+      }),
+    );
+    expect(claude.apiKeyUpdates).toEqual([null]);
+    expect(claude.subscriptionAuthUpdates).toEqual([false]);
+    releaseDisabledRestore();
+    releaseDisabledRestore();
+
+    preferenceStore.getPreference.mockReturnValue({
+      approved: true,
+      confirmedAt: '2026-08-01T21:00:00.000Z',
+    });
+    credentialStore.get.mockResolvedValue({ apiKey: restoredKey });
+    fake.detections[1] = {
+      provider: 'claude',
+      installed: true,
+      authenticated: true,
+      authSource: 'claude-code',
+      version: 'claude-restored-approved',
+      subscriptionAuthApproved: true,
+    };
+    const releaseApprovedRestore = service.beginVaultRestore();
+    await expect(service.reloadAfterVaultRestore()).resolves.toContainEqual(
+      expect.objectContaining({
+        provider: 'claude',
+        state: 'ready',
+        subscriptionAuthApproved: true,
+      }),
+    );
+    expect(claude.apiKeyUpdates).toEqual([null, restoredKey]);
+    expect(claude.subscriptionAuthUpdates).toEqual([false, true]);
+    releaseApprovedRestore();
   });
 
   it('returns fail-closed cached states without waiting for slow provider detection', async () => {
@@ -689,10 +864,11 @@ describe('DesktopAgentService', () => {
 
     completion.resolve({ summary: 'One proposal prepared.', proposals: [] });
     await completion.promise;
-    await Promise.resolve();
-    await expect(service.statuses()).resolves.toContainEqual(
-      expect.objectContaining({ provider: 'codex', state: 'ready' }),
-    );
+    await vi.waitFor(async () => {
+      await expect(service.statuses()).resolves.toContainEqual(
+        expect.objectContaining({ provider: 'codex', state: 'ready' }),
+      );
+    });
   });
 
   it('cleans up active state on synchronous launch failure and translates terminal errors', async () => {
@@ -718,6 +894,12 @@ describe('DesktopAgentService', () => {
     fake.runResult = completion.promise;
     const request = { ...baseRequest, runId: 'run:terminal-events' };
     await service.run(request);
+    expect(() => service.beginVaultRestore()).toThrow(
+      'cannot be restored while an agent run is active',
+    );
+    await expect(service.setSubscriptionAuthApproved('claude', true)).rejects.toThrow(
+      'cannot change while a run is active',
+    );
     const at = '2026-07-31T19:00:00.000Z';
     fake.emit({ type: 'run.cancelled', runId: request.runId, at });
     fake.emit({
@@ -734,6 +916,45 @@ describe('DesktopAgentService', () => {
     completion.reject(new Error('Provider returned an error.'));
     await expect(completion.promise).rejects.toThrow('Provider returned an error.');
     await Promise.resolve();
+    const releaseRestore = service.beginVaultRestore();
+    releaseRestore();
+  });
+
+  it('keeps the restore lease unavailable until asynchronous event persistence drains', async () => {
+    const { service } = await fixture();
+    const fake = runtime();
+    const completion = deferred<AgentResult>();
+    const persisted = deferred<void>();
+    fake.runResult = completion.promise;
+    const request: AgentRunRequest = {
+      runId: 'run:pending-persistence',
+      provider: 'claude',
+      prompt: 'Prepare one local proposal.',
+      disclosedContextIds: [],
+      context: {},
+      onEvent: (event) => (event.type === 'completed' ? persisted.promise : undefined),
+    };
+
+    await service.run(request);
+    fake.emit({
+      type: 'run.completed',
+      runId: request.runId,
+      result: { summary: 'Persist this before restoring.', proposals: [] },
+      at: '2026-08-01T22:00:00.000Z',
+    });
+    completion.resolve({ summary: 'Persist this before restoring.', proposals: [] });
+    await completion.promise;
+    await Promise.resolve();
+    expect(() => service.beginVaultRestore()).toThrow(
+      'cannot be restored while an agent run is active',
+    );
+
+    persisted.resolve();
+    await persisted.promise;
+    await vi.waitFor(() => {
+      const releaseRestore = service.beginVaultRestore();
+      releaseRestore();
+    });
   });
 
   it('rekeys repeated model proposal IDs per run and reports async event persistence failures', async () => {

@@ -299,6 +299,8 @@ export interface AgentStatus {
   version: string | null;
   accountLabel: string | null;
   mode: 'embedded' | 'mcp_companion';
+  /** True only after the founder explicitly confirms Anthropic approval on this device. */
+  subscriptionAuthApproved: boolean;
   error: string | null;
 }
 
@@ -497,6 +499,9 @@ export interface CommandMap {
   'agent.logout': { provider: AgentProvider };
   'agent.credential.set': { provider: 'claude'; credential: string };
   'agent.credential.remove': { provider: 'claude' };
+  'agent.subscription.set':
+    | { provider: 'claude'; approved: true; approvalConfirmed: true }
+    | { provider: 'claude'; approved: false };
   'agent.contextGrant.set': {
     provider: AgentProvider;
     contextClass: AgentContextGrant['contextClass'];
@@ -553,6 +558,7 @@ export interface CommandResultMap {
   'agent.logout': AgentStatus;
   'agent.credential.set': AgentStatus;
   'agent.credential.remove': AgentStatus;
+  'agent.subscription.set': AgentStatus;
   'agent.contextGrant.set': AgentContextGrant[];
   'agent.run': { runId: string };
   'agent.cancel': { cancelled: boolean };

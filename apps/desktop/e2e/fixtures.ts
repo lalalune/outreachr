@@ -58,6 +58,7 @@ export const test = base.extend<DesktopFixtures>({
         OUTREACHR_E2E_DATA_DIR: dataDirectory,
         OUTREACHR_E2E_GOOGLE_PROVIDER_URL: googleProviderMock.baseUrl,
         OUTREACHR_E2E_SECRET_KEY: randomBytes(32).toString('hex'),
+        CLAUDE_CODE_OAUTH_TOKEN: 'e2e-setup-token-must-never-persist',
         OUTREACHR_STARTUP_DIAGNOSTICS: '1',
         ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
       },

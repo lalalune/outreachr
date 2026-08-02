@@ -43,6 +43,7 @@ const AGENTS: AgentStatus[] = [
     version: 'test',
     accountLabel: 'ChatGPT test',
     mode: 'embedded',
+    subscriptionAuthApproved: false,
     error: null,
   },
   {
@@ -51,6 +52,7 @@ const AGENTS: AgentStatus[] = [
     version: 'test',
     accountLabel: null,
     mode: 'embedded',
+    subscriptionAuthApproved: false,
     error: null,
   },
 ];
@@ -110,6 +112,11 @@ describe('CommandService runtime boundary and workflows', () => {
       removeCredential: vi.fn(async (provider) =>
         AGENTS.find((item) => item.provider === provider)!,
       ),
+      setSubscriptionAuthApproved: vi.fn(async (provider) =>
+        AGENTS.find((item) => item.provider === provider)!,
+      ),
+      beginVaultRestore: vi.fn(() => vi.fn()),
+      reloadAfterVaultRestore: vi.fn(async () => AGENTS),
       run:
         options?.runAgent ??
         vi.fn(async (request) => {
@@ -264,6 +271,19 @@ describe('CommandService runtime boundary and workflows', () => {
         credential: 'sk-ant-invalid-provider-00000001',
       } as never),
     ).rejects.toMatchObject({ name: 'ZodError' });
+    await expect(
+      service.execute('agent.subscription.set', {
+        provider: 'claude',
+        approved: true,
+        approvalConfirmed: false,
+      } as never),
+    ).rejects.toMatchObject({ name: 'ZodError' });
+    await expect(
+      service.execute('agent.subscription.set', {
+        provider: 'claude',
+        approved: true,
+      } as never),
+    ).rejects.toMatchObject({ name: 'ZodError' });
 
     await expect(service.execute('agent.detect', { provider: 'codex' })).resolves.toMatchObject({
       provider: 'codex',
@@ -285,6 +305,16 @@ describe('CommandService runtime boundary and workflows', () => {
       service.execute('agent.credential.remove', { provider: 'claude' }),
     ).resolves.toMatchObject({ provider: 'claude' });
     await expect(
+      service.execute('agent.subscription.set', {
+        provider: 'claude',
+        approved: true,
+        approvalConfirmed: true,
+      }),
+    ).resolves.toMatchObject({ provider: 'claude' });
+    await expect(
+      service.execute('agent.subscription.set', { provider: 'claude', approved: false }),
+    ).resolves.toMatchObject({ provider: 'claude' });
+    await expect(
       service.execute('agent.cancel', { runId: 'agent-run:command-cancel' }),
     ).resolves.toEqual({ cancelled: true });
 
@@ -299,6 +329,8 @@ describe('CommandService runtime boundary and workflows', () => {
       'sk-ant-command-credential-00000001',
     );
     expect(agentMock.removeCredential).toHaveBeenCalledWith('claude');
+    expect(agentMock.setSubscriptionAuthApproved).toHaveBeenNthCalledWith(1, 'claude', true);
+    expect(agentMock.setSubscriptionAuthApproved).toHaveBeenNthCalledWith(2, 'claude', false);
     expect(agentMock.cancel).toHaveBeenCalledOnce();
     expect(agentMock.cancel).toHaveBeenCalledWith('agent-run:command-cancel');
   });
@@ -654,6 +686,68 @@ describe('CommandService runtime boundary and workflows', () => {
     expect(bootstrap.tasks).toEqual([]);
     await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(reopened.integrityCheck().ok).toBe(true);
+  });
+
+  it('blocks active agent runs and rehydrates runtime authentication after backup restore', async () => {
+    const { directory, service, agentMock, connectorMock } = await fixture();
+    await service.execute('onboarding.complete', onboarding);
+    const backup = await service.execute('backup.export', {
+      directory,
+      password: 'correct horse battery staple',
+    });
+
+    const restored = await service.execute('backup.restore', {
+      path: backup.path,
+      password: 'correct horse battery staple',
+    });
+
+    expect(agentMock.beginVaultRestore).toHaveBeenCalledOnce();
+    expect(agentMock.reloadAfterVaultRestore).toHaveBeenCalledOnce();
+    expect(connectorMock.statuses).toHaveBeenCalled();
+    expect(vi.mocked(agentMock.beginVaultRestore).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(agentMock.reloadAfterVaultRestore).mock.invocationCallOrder[0]!,
+    );
+    expect(restored.agents).toEqual(AGENTS);
+    expect(restored.connectors).toEqual(CONNECTORS);
+  });
+
+  it('holds a restore barrier across asynchronous replacement and authentication rehydration', async () => {
+    const { vault, service, agentMock } = await fixture();
+    let signalEntered!: () => void;
+    let releaseRestore!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      signalEntered = resolve;
+    });
+    const paused = new Promise<void>((resolve) => {
+      releaseRestore = resolve;
+    });
+    vi.spyOn(vault, 'restoreBackup').mockImplementation(async () => {
+      signalEntered();
+      await paused;
+      return vault.bootstrap();
+    });
+
+    const restoring = service.execute('backup.restore', {
+      path: '/tmp/deferred-valid-backup.outreachr-backup',
+      password: 'correct horse battery staple',
+    });
+    await entered;
+
+    await expect(
+      service.execute('agent.run', {
+        provider: 'claude',
+        prompt: 'Must be rejected during restore.',
+        disclosedContextIds: [],
+      }),
+    ).rejects.toThrow('while a backup restore is in progress');
+    await expect(service.bootstrap()).rejects.toThrow('while a backup restore is in progress');
+    expect(agentMock.run).not.toHaveBeenCalled();
+
+    releaseRestore();
+    await expect(restoring).resolves.toMatchObject({ agents: AGENTS, connectors: CONNECTORS });
+    expect(agentMock.reloadAfterVaultRestore).toHaveBeenCalledOnce();
+
+    await expect(service.execute('search', { query: '' })).resolves.toEqual(expect.any(Array));
   });
 
   it('records explicit agent context grants, runs, proposals, and completion events', async () => {

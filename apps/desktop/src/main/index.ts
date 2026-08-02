@@ -256,6 +256,7 @@ async function start(): Promise<void> {
     openExternal,
     mcp,
     credentialStore: secureStore,
+    preferenceStore: secureStore,
     persistVault: () => vault.persist(),
   });
   startupDiagnostic('agent runtime initialized');

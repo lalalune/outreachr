@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 - 2026-08-01
+
+- Added explicit founder-confirmed Claude subscription authentication for Anthropic-approved third-party deployments, using the official local Claude Code keychain/config session without copying or storing OAuth tokens.
+- Made Claude API-key and approved-subscription modes mutually exclusive, kept setup tokens blocked, and preserved every proposal-only Agent SDK/MCP restriction.
+- Added local macOS Developer ID Keychain signing and notarization support alongside the existing protected hosted-CI credential path.
+
 ## 0.1.1 - 2026-08-01
 
 - Replaced backtracking-prone address, fenced-JSON, and trailing-slash parsing with bounded deterministic implementations; hardened structured logging and architecture validation.

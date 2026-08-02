@@ -346,6 +346,8 @@ describe('vault migrations', () => {
         'knowledge_items',
         'lists',
         'connector_configs',
+        'secure_secrets',
+        'local_preferences',
         'agent_runs',
         'agent_proposals',
         'audit_log',
@@ -473,6 +475,28 @@ describe('vault migrations', () => {
     expect(
       migrated.scalar("SELECT disposition FROM targets WHERE id='target-custom-note'"),
     ).toBeNull();
+    expect(migrated.integrityCheck().ok).toBe(true);
+    migrated.close();
+  });
+
+  it('migrates a v8 vault with an empty device-local preference store', () => {
+    const legacy = new SQL.Database();
+    for (const migration of MIGRATIONS.filter((item) => item.version <= 8)) {
+      legacy.run(migration.sql);
+      legacy.run('INSERT INTO schema_migrations(version,name,applied_at) VALUES (?,?,?)', [
+        migration.version,
+        migration.name,
+        NOW,
+      ]);
+      legacy.run(`PRAGMA user_version=${migration.version}`);
+    }
+    const bytes = legacy.export();
+    legacy.close();
+
+    const migrated = new CoreVault(SQL, { bytes, appliedAt: LATER });
+    expect(migrated.schemaVersion).toBe(SCHEMA_VERSION);
+    expect(tableNames(migrated.db)).toContain('local_preferences');
+    expect(Number(migrated.scalar('SELECT COUNT(*) FROM local_preferences'))).toBe(0);
     expect(migrated.integrityCheck().ok).toBe(true);
     migrated.close();
   });

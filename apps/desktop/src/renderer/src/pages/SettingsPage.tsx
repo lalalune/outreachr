@@ -65,6 +65,8 @@ const officialLinks = {
   codexCli: 'https://learn.chatgpt.com/docs/codex/cli',
   claudeApiAuth: 'https://platform.claude.com/docs/en/manage-claude/authentication',
   claudeApiKeys: 'https://console.anthropic.com/settings/keys',
+  claudeAuthentication: 'https://code.claude.com/docs/en/authentication',
+  claudeAgentSdk: 'https://code.claude.com/docs/en/agent-sdk/overview',
   claudeLegal: 'https://code.claude.com/docs/en/legal-and-compliance',
 };
 
@@ -429,13 +431,14 @@ function AgentsSettings(): React.JSX.Element {
   const [busy, setBusy] = useState<AgentProvider | null>(null);
   const [claudeApiKey, setClaudeApiKey] = useState('');
   const [claudeApiKeyError, setClaudeApiKeyError] = useState<string | undefined>();
+  const [claudeApprovalConfirmed, setClaudeApprovalConfirmed] = useState(false);
   const encryptionAvailable = data?.connectors.some((item) => item.encryptionAvailable) ?? false;
 
   const detect = async (provider: AgentProvider): Promise<void> => {
     setBusy(provider);
     try {
       const status = await command('agent.detect', { provider });
-      const detail = status.version ?? status.error;
+      const detail = status.error ?? status.version;
       notify({
         tone: status.state === 'ready' ? 'success' : 'info',
         title: `${titleCase(provider)}: ${titleCase(status.state)}`,
@@ -460,7 +463,9 @@ function AgentsSettings(): React.JSX.Element {
           status.error ??
           (provider === 'codex'
             ? 'Finish the official browser flow, then select Detect.'
-            : 'Create an Anthropic API key, save it in this page, then select Detect.'),
+            : status.subscriptionAuthApproved
+              ? 'Run claude auth login --claudeai in a terminal, finish Anthropic sign-in, then select Detect.'
+              : 'Create an Anthropic API key, save it in this page, then select Detect.'),
       });
     } finally {
       setBusy(null);
@@ -521,6 +526,35 @@ function AgentsSettings(): React.JSX.Element {
     }
   };
 
+  const setClaudeSubscriptionAccess = async (approved: boolean): Promise<void> => {
+    if (approved && !claudeApprovalConfirmed) return;
+    setBusy('claude');
+    try {
+      const status = approved
+        ? await command('agent.subscription.set', {
+            provider: 'claude',
+            approved: true,
+            approvalConfirmed: true,
+          })
+        : await command('agent.subscription.set', { provider: 'claude', approved: false });
+      notify({
+        tone: approved ? 'success' : 'info',
+        title: approved
+          ? 'Claude subscription access enabled'
+          : 'Claude subscription access disabled',
+        detail: approved
+          ? status.state === 'ready'
+            ? 'The official local Claude Code session is ready. Outreachr does not receive its token.'
+            : (status.error ??
+              'Run claude auth login --claudeai in a terminal, then return and select Detect.')
+          : 'Outreachr stopped using the local Claude subscription session without signing Claude Code out.',
+      });
+    } finally {
+      setClaudeApprovalConfirmed(false);
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="agent-settings-list">
       {(data?.agents ?? []).map((agent) => (
@@ -532,7 +566,7 @@ function AgentsSettings(): React.JSX.Element {
               <small>
                 {agent.provider === 'codex'
                   ? 'Embedded app-server with ChatGPT plan authentication'
-                  : 'Local Agent SDK with a founder-provided Anthropic API key'}
+                  : 'Local Agent SDK with an API key or approved subscription access'}
               </small>
             </div>
           </div>
@@ -562,6 +596,14 @@ function AgentsSettings(): React.JSX.Element {
               >
                 Sign in
               </Button>
+            ) : agent.subscriptionAuthApproved && agent.state !== 'ready' ? (
+              <Button
+                tone="primary"
+                loading={busy === agent.provider}
+                onClick={() => void login(agent.provider)}
+              >
+                Sign-in guidance
+              </Button>
             ) : null}
           </div>
           <div className="agent-settings-list__detail">
@@ -582,21 +624,104 @@ function AgentsSettings(): React.JSX.Element {
             ) : (
               <>
                 <p>
-                  Outreachr ships the official Claude Agent SDK sidecar but does not accept Claude
-                  subscription or setup-token credentials. Anthropic's current third-party guidance
-                  requires an API key or supported cloud provider. API use is optional and may incur
-                  charges from Anthropic. Create a key in Claude Console, then save it below.
+                  Outreachr ships the official Claude Agent SDK sidecar. API-key authentication is
+                  the default. A local Claude subscription can be used only when Anthropic has
+                  approved this third-party integration and the founder explicitly enables it.
                 </p>
-                <ExternalLinkButton href={officialLinks.claudeApiKeys}>
-                  Create API key
+                <ExternalLinkButton href={officialLinks.claudeAgentSdk}>
+                  Agent SDK authentication policy
                 </ExternalLinkButton>
-                <ExternalLinkButton href={officialLinks.claudeApiAuth}>
-                  API authentication
+                <ExternalLinkButton href={officialLinks.claudeAuthentication}>
+                  Claude Code authentication
                 </ExternalLinkButton>
                 <ExternalLinkButton href={officialLinks.claudeLegal}>
                   Anthropic legal guidance
                 </ExternalLinkButton>
+
+                <fieldset className="agent-auth-form">
+                  <legend>Claude subscription</legend>
+                  <p>
+                    Use the official Claude sign-in already present on this device. Subscription
+                    access is off by default and may be enabled only for an Outreachr deployment
+                    Anthropic has approved. Approval for one deployment may not transfer to a fork.
+                  </p>
+                  <p>
+                    Outreachr never asks for, copies, stores, returns, or logs your Claude OAuth
+                    token. The official local runtime owns sign-in and refresh. Setup tokens remain
+                    unsupported, and disabling this mode does not sign you out of Claude Code.
+                  </p>
+                  <p>
+                    Agent SDK use draws from your plan's separate Agent SDK credit under Anthropic's
+                    current limits.
+                  </p>
+                  {agent.subscriptionAuthApproved ? (
+                    <div className="setup-diagnostic" role="status">
+                      <Badge tone={agent.state === 'ready' ? 'success' : 'warning'}>
+                        Subscription enabled by founder
+                      </Badge>
+                      <p>
+                        {agent.state === 'ready'
+                          ? 'The official local Claude Code session is ready.'
+                          : 'Run claude auth login --claudeai in a terminal, finish Anthropic sign-in, then select Detect.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <label className="check-row">
+                      <input
+                        type="checkbox"
+                        checked={claudeApprovalConfirmed}
+                        onChange={(event) => setClaudeApprovalConfirmed(event.target.checked)}
+                        disabled={busy === 'claude'}
+                      />
+                      <span>
+                        <strong>I confirm Anthropic approved this Outreachr deployment</strong>
+                        <small>
+                          This is a founder attestation, not an approval check performed by
+                          Outreachr.
+                        </small>
+                      </span>
+                    </label>
+                  )}
+                  <div className="agent-credential-form__actions">
+                    {agent.subscriptionAuthApproved ? (
+                      <Button
+                        tone="danger"
+                        loading={busy === 'claude'}
+                        onClick={() => void setClaudeSubscriptionAccess(false)}
+                      >
+                        Disable subscription access
+                      </Button>
+                    ) : (
+                      <Button
+                        tone="primary"
+                        loading={busy === 'claude'}
+                        disabled={!claudeApprovalConfirmed}
+                        onClick={() => void setClaudeSubscriptionAccess(true)}
+                      >
+                        Enable subscription access
+                      </Button>
+                    )}
+                    {agent.subscriptionAuthApproved && agent.state !== 'ready' ? (
+                      <Button loading={busy === 'claude'} onClick={() => void login('claude')}>
+                        Show sign-in command
+                      </Button>
+                    ) : null}
+                  </div>
+                </fieldset>
+
                 <div className="agent-credential-form">
+                  <strong>Anthropic API key</strong>
+                  <p>
+                    API use is optional and may incur charges from Anthropic. Saving a key makes
+                    API-key mode active and disables subscription mode without deleting the
+                    independent Claude Code login.
+                  </p>
+                  <ExternalLinkButton href={officialLinks.claudeApiKeys}>
+                    Create API key
+                  </ExternalLinkButton>
+                  <ExternalLinkButton href={officialLinks.claudeApiAuth}>
+                    API authentication
+                  </ExternalLinkButton>
                   {!encryptionAvailable ? (
                     <div className="setup-diagnostic" role="status">
                       <Badge tone="danger">Credential storage unavailable</Badge>
@@ -1240,7 +1365,7 @@ export function SettingsPage(): React.JSX.Element {
             <>
               <Section
                 title="Local agents"
-                description="Codex uses official ChatGPT sign-in; Claude uses a founder-provided API key. Outreachr supplies typed local context and proposal-only tools."
+                description="Codex uses official ChatGPT sign-in; Claude uses an API key or explicitly enabled approved subscription access. Both receive typed local context and proposal-only tools."
               >
                 <AgentsSettings />
               </Section>

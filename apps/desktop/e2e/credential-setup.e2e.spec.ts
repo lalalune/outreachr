@@ -33,9 +33,43 @@ test.describe('Founder credential setup through the built Electron boundary', ()
 
     await page.getByRole('button', { name: 'Agents', exact: true }).click();
     await expect(page.getByText(/official ChatGPT sign-in page/u)).toBeVisible();
+    await expect(page.getByText(/API-key authentication is the default/u)).toBeVisible();
+    const enableSubscription = page.getByRole('button', {
+      name: 'Enable subscription access',
+      exact: true,
+    });
+    await expect(enableSubscription).toBeDisabled();
+    await page
+      .getByRole('checkbox', {
+        name: /I confirm Anthropic approved this Outreachr deployment/u,
+      })
+      .check();
+    await expect(enableSubscription).toBeEnabled();
+    await enableSubscription.click();
     await expect(
-      page.getByText(/does not accept Claude subscription or setup-token credentials/u),
+      page.getByText('Claude subscription access enabled', { exact: true }),
     ).toBeVisible();
+    await expect(page.getByText('Subscription enabled by founder', { exact: true })).toBeVisible();
+
+    const subscriptionBootstrap = await page.evaluate(async () => window.outreachr.bootstrap());
+    expect(
+      subscriptionBootstrap.agents.find((agent) => agent.provider === 'claude')
+        ?.subscriptionAuthApproved,
+    ).toBe(true);
+    const subscriptionVaultBytes = await readFile(subscriptionBootstrap.vaultPath);
+    expect(subscriptionVaultBytes.includes(Buffer.from('e2e-setup-token-must-never-persist'))).toBe(
+      false,
+    );
+
+    await page.getByRole('button', { name: 'Disable subscription access', exact: true }).click();
+    await expect(
+      page.getByText('Claude subscription access disabled', { exact: true }),
+    ).toBeVisible();
+    const disabledBootstrap = await page.evaluate(async () => window.outreachr.bootstrap());
+    expect(
+      disabledBootstrap.agents.find((agent) => agent.provider === 'claude')
+        ?.subscriptionAuthApproved,
+    ).toBe(false);
 
     const apiKey = 'sk-ant-built-electron-write-only-key-000001';
     const keyInput = page.getByLabel('Anthropic API key', { exact: true });

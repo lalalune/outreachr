@@ -137,6 +137,7 @@ export function bootstrapFixture(firstRun = false): AppBootstrap {
         version: null,
         accountLabel: null,
         mode: 'embedded',
+        subscriptionAuthApproved: false,
         error: null,
       },
       {
@@ -145,6 +146,7 @@ export function bootstrapFixture(firstRun = false): AppBootstrap {
         version: null,
         accountLabel: null,
         mode: 'embedded',
+        subscriptionAuthApproved: false,
         error: null,
       },
     ],

@@ -32,12 +32,27 @@ interface AgentServiceOptions {
     set(key: string, value: unknown): Promise<void>;
     delete(key: string): void;
   };
+  preferenceStore: {
+    getPreference<T>(key: string): T | null;
+    setPreference(key: string, value: unknown): void;
+    deletePreference(key: string): void;
+  };
   persistVault: () => Promise<void>;
 }
 
 const CLAUDE_API_KEY_SECRET = 'agent/claude/api-key';
+const CLAUDE_SUBSCRIPTION_APPROVAL = 'agent/claude/subscription-approval';
 
-function statusFromDetection(detection: ProviderDetection, running = false): AgentStatus {
+interface ClaudeSubscriptionApproval {
+  approved: true;
+  confirmedAt: string;
+}
+
+function statusFromDetection(
+  detection: ProviderDetection,
+  running = false,
+  subscriptionFallback = false,
+): AgentStatus {
   return {
     provider: detection.provider,
     state: !detection.installed
@@ -50,7 +65,11 @@ function statusFromDetection(detection: ProviderDetection, running = false): Age
     version: detection.version ?? null,
     accountLabel: detection.accountLabel ?? detection.plan ?? null,
     mode: 'embedded',
-    error: detection.detail ?? null,
+    subscriptionAuthApproved:
+      detection.provider === 'claude'
+        ? (detection.subscriptionAuthApproved ?? subscriptionFallback)
+        : false,
+    error: detection.authenticated ? null : (detection.detail ?? null),
   };
 }
 
@@ -83,8 +102,11 @@ export class DesktopAgentService implements AgentRuntimeController {
   readonly #openExternal: (url: string) => Promise<void>;
   readonly #mcp: DesktopMcpController;
   readonly #credentialStore: AgentServiceOptions['credentialStore'];
+  readonly #preferenceStore: AgentServiceOptions['preferenceStore'];
   readonly #persistVault: () => Promise<void>;
+  readonly #launchClaudeApiKey: string | undefined;
   readonly #active = new Map<string, AgentRunRequest>();
+  readonly #pendingDeliveries = new Map<string, Set<Promise<void>>>();
   readonly #cachedStatuses = new Map<AgentProvider, AgentStatus>([
     [
       'codex',
@@ -94,6 +116,7 @@ export class DesktopAgentService implements AgentRuntimeController {
         version: null,
         accountLabel: null,
         mode: 'embedded',
+        subscriptionAuthApproved: false,
         error: null,
       },
     ],
@@ -105,6 +128,7 @@ export class DesktopAgentService implements AgentRuntimeController {
         version: null,
         accountLabel: null,
         mode: 'embedded',
+        subscriptionAuthApproved: false,
         error: null,
       },
     ],
@@ -116,6 +140,8 @@ export class DesktopAgentService implements AgentRuntimeController {
   #statusRefresh: Promise<void> | null = null;
   #lastStatusRefreshAt = 0;
   #nextRunId: string | null = null;
+  #claudeSubscriptionAuthApproved: boolean;
+  #vaultRestoreInProgress = false;
   readonly #unsubscribe: () => void;
 
   private constructor(
@@ -124,14 +150,20 @@ export class DesktopAgentService implements AgentRuntimeController {
     openExternal: (url: string) => Promise<void>,
     mcp: DesktopMcpController,
     credentialStore: AgentServiceOptions['credentialStore'],
+    preferenceStore: AgentServiceOptions['preferenceStore'],
     persistVault: () => Promise<void>,
+    claudeSubscriptionAuthApproved: boolean,
+    launchClaudeApiKey: string | undefined,
   ) {
     this.#runtime = runtime;
     this.#claude = claude;
     this.#openExternal = openExternal;
     this.#mcp = mcp;
     this.#credentialStore = credentialStore;
+    this.#preferenceStore = preferenceStore;
     this.#persistVault = persistVault;
+    this.#claudeSubscriptionAuthApproved = claudeSubscriptionAuthApproved;
+    this.#launchClaudeApiKey = launchClaudeApiKey;
     this.#unsubscribe = runtime.subscribe((event) => this.#handleEvent(event));
   }
 
@@ -142,7 +174,22 @@ export class DesktopAgentService implements AgentRuntimeController {
     const codexExecutable = (await exists(packaged.codex)) ? packaged.codex : 'codex';
     const claudeExecutable = (await exists(packaged.claude)) ? packaged.claude : 'claude';
     const claudeEnvironment: NodeJS.ProcessEnv = { ...process.env };
+    // Setup tokens are intentionally unsupported. Subscription mode delegates
+    // authentication to the official local Claude runtime and its OS keychain.
     delete claudeEnvironment.CLAUDE_CODE_OAUTH_TOKEN;
+    const launchClaudeApiKey = claudeEnvironment.ANTHROPIC_API_KEY;
+    let claudeSubscriptionAuthApproved = false;
+    try {
+      const approval = options.preferenceStore.getPreference<ClaudeSubscriptionApproval>(
+        CLAUDE_SUBSCRIPTION_APPROVAL,
+      );
+      claudeSubscriptionAuthApproved =
+        approval?.approved === true &&
+        typeof approval.confirmedAt === 'string' &&
+        approval.confirmedAt.length > 0;
+    } catch {
+      // Invalid local preference data fails closed without blocking startup.
+    }
     try {
       if ((await options.credentialStore.status()).available) {
         const stored = await options.credentialStore.get<{ apiKey?: unknown }>(
@@ -160,6 +207,7 @@ export class DesktopAgentService implements AgentRuntimeController {
       workspaceDirectory,
       executable: claudeExecutable,
       environment: claudeEnvironment,
+      allowSubscriptionAuth: claudeSubscriptionAuthApproved,
       clearEnvironmentCredential: async () => {
         options.credentialStore.delete(CLAUDE_API_KEY_SECRET);
         await options.persistVault();
@@ -188,7 +236,10 @@ export class DesktopAgentService implements AgentRuntimeController {
       options.openExternal,
       options.mcp,
       options.credentialStore,
+      options.preferenceStore,
       options.persistVault,
+      claudeSubscriptionAuthApproved,
+      launchClaudeApiKey,
     );
     holder.service = service;
     return service;
@@ -204,7 +255,11 @@ export class DesktopAgentService implements AgentRuntimeController {
 
   async detect(provider: AgentProvider): Promise<AgentStatus> {
     const revision = this.#beginStatusUpdate(provider);
-    const status = statusFromDetection(await this.#runtime.detect(provider));
+    const status = statusFromDetection(
+      await this.#runtime.detect(provider),
+      false,
+      this.#claudeSubscriptionAuthApproved,
+    );
     this.#cacheStatus(provider, revision, status);
     return this.#withRunningState(status);
   }
@@ -213,12 +268,17 @@ export class DesktopAgentService implements AgentRuntimeController {
     const revision = this.#beginStatusUpdate(provider);
     const challenge = await this.#runtime.login({
       provider,
-      mode: provider === 'codex' ? 'browser' : 'api-key',
+      mode:
+        provider === 'codex'
+          ? 'browser'
+          : this.#claudeSubscriptionAuthApproved
+            ? 'official-cli'
+            : 'api-key',
     });
     if (challenge.url) await this.#openExternal(challenge.url);
     const detected = await this.#runtime.detect(provider);
     const status: AgentStatus = {
-      ...statusFromDetection(detected),
+      ...statusFromDetection(detected, false, this.#claudeSubscriptionAuthApproved),
       error: detected.authenticated ? null : challenge.instructions,
     };
     this.#cacheStatus(provider, revision, status);
@@ -233,18 +293,27 @@ export class DesktopAgentService implements AgentRuntimeController {
 
   async setCredential(provider: 'claude', credential: string): Promise<AgentStatus> {
     if (provider !== 'claude') throw new Error('Unsupported agent credential provider');
+    if (this.#vaultRestoreInProgress) {
+      throw new Error('Claude credentials cannot change while a backup restore is in progress');
+    }
     if ([...this.#active.values()].some((run) => run.provider === 'claude')) {
       throw new Error('Claude credentials cannot change while a run is active');
     }
     const apiKey = normalizeClaudeApiKey(credential);
     await this.#credentialStore.set(CLAUDE_API_KEY_SECRET, { apiKey });
+    this.#preferenceStore.deletePreference(CLAUDE_SUBSCRIPTION_APPROVAL);
     await this.#persistVault();
     this.#claude.setApiKey(apiKey);
+    this.#claude.setSubscriptionAuthApproved(false);
+    this.#claudeSubscriptionAuthApproved = false;
     return this.detect('claude');
   }
 
   async removeCredential(provider: 'claude'): Promise<AgentStatus> {
     if (provider !== 'claude') throw new Error('Unsupported agent credential provider');
+    if (this.#vaultRestoreInProgress) {
+      throw new Error('Claude credentials cannot change while a backup restore is in progress');
+    }
     if ([...this.#active.values()].some((run) => run.provider === 'claude')) {
       throw new Error('Claude credentials cannot change while a run is active');
     }
@@ -254,7 +323,93 @@ export class DesktopAgentService implements AgentRuntimeController {
     return this.detect('claude');
   }
 
+  async setSubscriptionAuthApproved(provider: 'claude', approved: boolean): Promise<AgentStatus> {
+    if (provider !== 'claude') throw new Error('Unsupported subscription-auth provider');
+    if (this.#vaultRestoreInProgress) {
+      throw new Error(
+        'Claude authentication mode cannot change while a backup restore is in progress',
+      );
+    }
+    if ([...this.#active.values()].some((run) => run.provider === 'claude')) {
+      throw new Error('Claude authentication mode cannot change while a run is active');
+    }
+    if (approved) {
+      this.#preferenceStore.setPreference(CLAUDE_SUBSCRIPTION_APPROVAL, {
+        approved: true,
+        confirmedAt: new Date().toISOString(),
+      } satisfies ClaudeSubscriptionApproval);
+    } else {
+      this.#preferenceStore.deletePreference(CLAUDE_SUBSCRIPTION_APPROVAL);
+    }
+    await this.#persistVault();
+    this.#claude.setSubscriptionAuthApproved(approved);
+    this.#claudeSubscriptionAuthApproved = approved;
+    return this.detect('claude');
+  }
+
+  beginVaultRestore(): () => void {
+    if (this.#vaultRestoreInProgress) {
+      throw new Error('A backup restore is already in progress');
+    }
+    if (this.#active.size > 0) {
+      throw new Error('A backup cannot be restored while an agent run is active');
+    }
+    this.#vaultRestoreInProgress = true;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#vaultRestoreInProgress = false;
+    };
+  }
+
+  async reloadAfterVaultRestore(): Promise<AgentStatus[]> {
+    if (!this.#vaultRestoreInProgress) {
+      throw new Error('Agent authentication can reload only while a backup restore lease is held');
+    }
+    if (this.#active.size > 0) {
+      throw new Error('Agent authentication cannot reload while an agent run is active');
+    }
+    let approved = false;
+    try {
+      const approval = this.#preferenceStore.getPreference<ClaudeSubscriptionApproval>(
+        CLAUDE_SUBSCRIPTION_APPROVAL,
+      );
+      approved =
+        approval?.approved === true &&
+        typeof approval.confirmedAt === 'string' &&
+        approval.confirmedAt.length > 0;
+    } catch {
+      // A malformed replacement preference fails closed.
+    }
+
+    let apiKey = this.#launchClaudeApiKey;
+    try {
+      if ((await this.#credentialStore.status()).available) {
+        const stored = await this.#credentialStore.get<{ apiKey?: unknown }>(CLAUDE_API_KEY_SECRET);
+        if (typeof stored?.apiKey === 'string') apiKey = normalizeClaudeApiKey(stored.apiKey);
+      }
+    } catch {
+      // An unavailable or device-bound restored secret falls back to the explicit
+      // launch environment; if none exists, Claude API-key mode is signed out.
+    }
+
+    try {
+      this.#claude.setApiKey(apiKey ?? null);
+    } catch {
+      // Invalid inherited launch configuration must not preserve the pre-restore key.
+      this.#claude.setApiKey(null);
+    }
+    this.#claude.setSubscriptionAuthApproved(approved);
+    this.#claudeSubscriptionAuthApproved = approved;
+    await this.detect('claude');
+    return this.#statusSnapshot();
+  }
+
   async run(request: AgentRunRequest): Promise<{ runId: string }> {
+    if (this.#vaultRestoreInProgress) {
+      throw new Error('An agent run cannot start while a backup restore is in progress');
+    }
     if (this.#active.has(request.runId))
       throw new Error(`Agent run ${request.runId} already exists`);
     this.#active.set(request.runId, request);
@@ -275,6 +430,7 @@ export class DesktopAgentService implements AgentRuntimeController {
       const handle = this.#runtime.run(runtimeRequest);
       void handle.result
         .catch(() => undefined)
+        .then(() => this.#waitForDeliveries(request.runId))
         .finally(() => {
           this.#active.delete(request.runId);
           this.#mcp.unregisterSession(request.runId);
@@ -312,7 +468,7 @@ export class DesktopAgentService implements AgentRuntimeController {
           this.#cacheStatus(
             detection.provider,
             revisions.get(detection.provider) ?? 0,
-            statusFromDetection(detection),
+            statusFromDetection(detection, false, this.#claudeSubscriptionAuthApproved),
           );
         }
       })
@@ -325,6 +481,7 @@ export class DesktopAgentService implements AgentRuntimeController {
             version: null,
             accountLabel: null,
             mode: 'embedded',
+            subscriptionAuthApproved: provider === 'claude' && this.#claudeSubscriptionAuthApproved,
             error: detail,
           });
         }
@@ -447,7 +604,7 @@ export class DesktopAgentService implements AgentRuntimeController {
         error instanceof Error ? error : new Error('Unknown local persistence error.'),
       );
     }
-    void delivery.catch(async (error: unknown) => {
+    const handled = delivery.catch(async (error: unknown) => {
       if (event.type === 'error') return;
       const detail = error instanceof Error ? error.message : 'Unknown local persistence error.';
       try {
@@ -461,6 +618,21 @@ export class DesktopAgentService implements AgentRuntimeController {
         // recurse or become an unhandled rejection.
       }
     });
+    const pending = this.#pendingDeliveries.get(event.runId) ?? new Set<Promise<void>>();
+    this.#pendingDeliveries.set(event.runId, pending);
+    pending.add(handled);
+    void handled.finally(() => {
+      pending.delete(handled);
+      if (pending.size === 0) this.#pendingDeliveries.delete(event.runId);
+    });
+  }
+
+  async #waitForDeliveries(runId: string): Promise<void> {
+    while (true) {
+      const pending = this.#pendingDeliveries.get(runId);
+      if (!pending?.size) return;
+      await Promise.allSettled([...pending]);
+    }
   }
 
   #proposalEvent(runId: string, proposal: AgentProposal): AgentEvent {

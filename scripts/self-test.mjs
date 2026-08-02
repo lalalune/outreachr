@@ -22,6 +22,13 @@ import {
   throwCleanupErrors,
   throwWithCleanup,
 } from './_lib.mjs';
+import {
+  assertMacSigningSourceIsExclusive,
+  localKeychainSigningConfiguration,
+  notarytoolCredentialArgs,
+  preflightLocalDeveloperId,
+  selectDeveloperIdIdentity,
+} from './apple-signing.mjs';
 import { assessReleaseSecrets } from './validate-release-secrets.mjs';
 import { verifyFuseBinary } from './verify-electron-fuses.mjs';
 import { signingStatus } from './write-signing-status.mjs';
@@ -108,6 +115,157 @@ try {
   assert.equal(targetId('darwin', 'x64'), 'macos-x64');
   assert.equal(targetId('win32', 'arm64'), 'windows-arm64');
   assert.equal(targetId('linux', 'arm64'), 'linux-arm64');
+  const localSigningInput = {
+    OUTREACHR_MAC_KEYCHAIN_IDENTITY: 'Developer ID Application: Example Maintainer (ABCDE12345)',
+    OUTREACHR_MAC_EXPECTED_TEAM_ID: 'ABCDE12345',
+    OUTREACHR_APPLE_KEYCHAIN_PROFILE: 'outreachr-notary',
+  };
+  assert.deepEqual(localKeychainSigningConfiguration(localSigningInput), {
+    environment: {
+      CSC_NAME: 'Example Maintainer (ABCDE12345)',
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+      APPLE_KEYCHAIN_PROFILE: 'outreachr-notary',
+    },
+    identity: 'Developer ID Application: Example Maintainer (ABCDE12345)',
+    expectedTeamId: 'ABCDE12345',
+    keychain: undefined,
+  });
+  assert.equal(
+    localKeychainSigningConfiguration({
+      ...localSigningInput,
+      OUTREACHR_MAC_KEYCHAIN_IDENTITY: '0123456789abcdef0123456789abcdef01234567',
+    }).environment.CSC_NAME,
+    '0123456789ABCDEF0123456789ABCDEF01234567',
+  );
+  const customKeychain = path.join(temporaryRoot, 'release-signing.keychain-db');
+  const localSigningWithKeychain = localKeychainSigningConfiguration({
+    ...localSigningInput,
+    OUTREACHR_APPLE_KEYCHAIN: customKeychain,
+  });
+  assert.equal(localSigningWithKeychain.environment.CSC_KEYCHAIN, customKeychain);
+  assert.equal(localSigningWithKeychain.environment.APPLE_KEYCHAIN, customKeychain);
+  assert.throws(
+    () =>
+      localKeychainSigningConfiguration({
+        ...localSigningInput,
+        OUTREACHR_APPLE_KEYCHAIN: 'relative.keychain-db',
+      }),
+    /absolute Keychain path/,
+  );
+  assert.throws(
+    () =>
+      localKeychainSigningConfiguration({
+        ...localSigningInput,
+        OUTREACHR_MAC_CERTIFICATE_BASE64: 'portable-certificate',
+      }),
+    /mutually exclusive.*OUTREACHR_MAC_CERTIFICATE_BASE64/,
+  );
+  assert.throws(
+    () =>
+      assertMacSigningSourceIsExclusive('portable', {
+        OUTREACHR_APPLE_KEYCHAIN_PROFILE: 'local-profile',
+      }),
+    /mutually exclusive.*OUTREACHR_APPLE_KEYCHAIN_PROFILE/,
+  );
+  const developerIdOutput =
+    '  1) 0123456789ABCDEF0123456789ABCDEF01234567 "Developer ID Application: Example Maintainer (ABCDE12345)"\n' +
+    '  2) 89ABCDEF0123456789ABCDEF0123456789ABCDEF "Apple Development: Example Maintainer (ABCDE12345)"\n' +
+    '     2 valid identities found\n';
+  assert.deepEqual(
+    selectDeveloperIdIdentity(
+      developerIdOutput,
+      'Developer ID Application: Example Maintainer (ABCDE12345)',
+      'ABCDE12345',
+    ),
+    {
+      fingerprint: '0123456789ABCDEF0123456789ABCDEF01234567',
+      name: 'Developer ID Application: Example Maintainer (ABCDE12345)',
+      teamId: 'ABCDE12345',
+    },
+  );
+  assert.equal(
+    selectDeveloperIdIdentity(
+      developerIdOutput,
+      '0123456789abcdef0123456789abcdef01234567',
+      'ABCDE12345',
+    ).name,
+    'Developer ID Application: Example Maintainer (ABCDE12345)',
+  );
+  assert.throws(
+    () =>
+      selectDeveloperIdIdentity(
+        developerIdOutput,
+        'Developer ID Application: Example Maintainer (ABCDE12345)',
+        'ZYXWV98765',
+      ),
+    /team mismatch/,
+  );
+  assert.throws(
+    () =>
+      selectDeveloperIdIdentity(
+        developerIdOutput,
+        'Apple Development: Example Maintainer (ABCDE12345)',
+        'ABCDE12345',
+      ),
+    /not a Developer ID Application certificate/,
+  );
+  let securityInvocation;
+  assert.equal(
+    (
+      await preflightLocalDeveloperId(localSigningWithKeychain, {
+        runner: async (command, commandArgs) => {
+          securityInvocation = { command, commandArgs };
+          return { stdout: developerIdOutput, stderr: '' };
+        },
+      })
+    ).teamId,
+    'ABCDE12345',
+  );
+  assert.deepEqual(securityInvocation, {
+    command: 'security',
+    commandArgs: ['find-identity', '-v', '-p', 'codesigning', customKeychain],
+  });
+  assert.deepEqual(notarytoolCredentialArgs({ APPLE_KEYCHAIN_PROFILE: 'outreachr-notary' }), [
+    '--keychain-profile',
+    'outreachr-notary',
+  ]);
+  assert.deepEqual(
+    notarytoolCredentialArgs({
+      APPLE_KEYCHAIN: customKeychain,
+      APPLE_KEYCHAIN_PROFILE: 'outreachr-notary',
+    }),
+    ['--keychain', customKeychain, '--keychain-profile', 'outreachr-notary'],
+  );
+  assert.deepEqual(
+    notarytoolCredentialArgs({
+      APPLE_API_KEY: '/tmp/notary-key.p8',
+      APPLE_API_KEY_ID: 'KEYID',
+      APPLE_API_ISSUER: 'ISSUER',
+    }),
+    ['--key', '/tmp/notary-key.p8', '--key-id', 'KEYID', '--issuer', 'ISSUER'],
+  );
+  assert.deepEqual(
+    notarytoolCredentialArgs({
+      APPLE_ID: 'maintainer@example.com',
+      APPLE_APP_SPECIFIC_PASSWORD: 'secret',
+      APPLE_TEAM_ID: 'ABCDE12345',
+    }),
+    ['--apple-id', 'maintainer@example.com', '--password', 'secret', '--team-id', 'ABCDE12345'],
+  );
+  assert.throws(
+    () =>
+      notarytoolCredentialArgs({
+        APPLE_KEYCHAIN_PROFILE: 'outreachr-notary',
+        APPLE_ID: 'maintainer@example.com',
+        APPLE_APP_SPECIFIC_PASSWORD: 'secret',
+        APPLE_TEAM_ID: 'ABCDE12345',
+      }),
+    /Exactly one Apple notarization credential mode/,
+  );
+  assert.throws(
+    () => notarytoolCredentialArgs({ APPLE_API_KEY: '/tmp/notary-key.p8' }),
+    /credentials are partial/,
+  );
   const fuseSentinel = Buffer.from('dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX', 'ascii');
   const hardenedFuseWire = Buffer.concat([
     fuseSentinel,

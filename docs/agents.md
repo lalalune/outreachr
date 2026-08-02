@@ -1,6 +1,6 @@
 # Codex and Claude agents
 
-Outreachr does not bundle a model or proxy a vendor login. Agents are optional: the rest of the desktop app works without either provider. Codex supports the vendor-owned ChatGPT sign-in flow; Claude uses a founder-owned Anthropic API key and may incur provider usage charges.
+Outreachr does not bundle a model or proxy a vendor login. Agents are optional: the rest of the desktop app works without either provider. Codex supports the vendor-owned ChatGPT sign-in flow. Claude uses either a founder-owned Anthropic API key or an existing local Claude subscription session when Anthropic has approved the third-party integration and the founder explicitly enables that mode.
 
 ## Codex
 
@@ -10,16 +10,27 @@ The integration sends a bounded prompt and selected local context. Codex app-ser
 
 ## Claude
 
-Outreachr uses the official Claude Agent SDK with the packaged or installed Claude Code executable. Anthropic's current guidance for third-party Agent SDK products directs developers to API-key or supported cloud-provider authentication and says they may not route Claude Free, Pro, Max, or setup-token credentials. Outreachr therefore fails closed when it detects subscription authentication and removes `CLAUDE_CODE_OAUTH_TOKEN` from the child process environment. See [Anthropic legal and compliance](https://code.claude.com/docs/en/legal-and-compliance), [API authentication](https://platform.claude.com/docs/en/manage-claude/authentication), and the [Agent SDK overview](https://platform.claude.com/docs/en/agent-sdk/overview).
+Outreachr uses the official Claude Agent SDK with the packaged or installed Claude Code executable. Anthropic's current [Agent SDK overview](https://code.claude.com/docs/en/agent-sdk/overview) says third-party subscription authentication requires prior approval. Outreachr therefore leaves subscription access off by default and never enables it merely because a local Claude login is detected. See [Claude Code authentication](https://code.claude.com/docs/en/authentication), [API authentication](https://platform.claude.com/docs/en/manage-claude/authentication), and [Anthropic legal and compliance](https://code.claude.com/docs/en/legal-and-compliance).
 
-To enable Claude:
+### API-key mode
 
 1. Create a founder-owned key in the [Anthropic Console](https://console.anthropic.com/settings/keys). API usage is billed by Anthropic, so this integration is optional.
 2. Open **Settings → Agents** and paste the key into **Anthropic API key**. Do not paste a Claude subscription token or setup token.
 3. Select **Save encrypted API key**. The write-only field clears after every attempt. The key crosses the typed preload command once, is encrypted in the main process with Electron's operating-system credential facility, and only ciphertext is stored in the local SQLite vault. Bootstrap/status responses never return it, and production diagnostics must never log it.
 4. Select **Detect** if Claude does not show **Ready**. Use **Remove stored API key** to delete the local ciphertext. Credentials are single-device; a restored vault still requires the operating-system credential context that encrypted it.
 
-Outreachr identifies the local subprocess as `outreachr/0.1.1` and disables built-in tools, plugins, skills, subagents, settings sources, filesystem additions, and persistent sessions. `strictMcpConfig` permits only Outreachr's authenticated loopback MCP server. The permission callback allows only exact `mcp__outreachr__…` names from the run allowlist and interrupts every other tool attempt.
+Saving an API key makes API-key mode active. A previously saved key may remain encrypted as a fallback while subscription mode is enabled, but it is removed from the Agent SDK child environment in that mode.
+
+### Anthropic-approved subscription mode
+
+1. Confirm that Anthropic has approved this Outreachr deployment for third-party subscription authentication. Approval for one distributor or deployment may not transfer to a fork.
+2. Run `claude auth login --claudeai` in a local terminal and complete the official Claude Code sign-in.
+3. In **Settings → Agents**, check the founder attestation and select **Enable subscription access**, then select **Detect**.
+4. To stop using the subscription in Outreachr, select **Disable subscription access**. Outreachr does not log out or alter the independent Claude Code session.
+
+The approval choice and timestamp are non-secret device-local preferences in SQLite. OAuth credentials remain owned by the official Claude runtime and its OS keychain/config; Outreachr never asks for, copies, stores, returns, exports, or logs them. `CLAUDE_CODE_OAUTH_TOKEN` setup tokens are unsupported and stripped. Subscription mode also strips `ANTHROPIC_API_KEY`, making the two billing/authentication paths mutually exclusive. Anthropic currently describes subscription Agent SDK usage as drawing from separate plan credit and applying current plan limits.
+
+Outreachr identifies the local subprocess as `outreachr/0.1.2` and disables built-in tools, plugins, skills, subagents, settings sources, filesystem additions, and persistent sessions. `strictMcpConfig` permits only Outreachr's authenticated loopback MCP server. The permission callback allows only exact `mcp__outreachr__…` names from the run allowlist and interrupts every other tool attempt. These restrictions are identical in API-key and approved-subscription modes, and authentication cannot change during an active run.
 
 Anthropic's product and legal guidance can change. Distributors must re-check the official authentication and Agent SDK terms before each release; this document is an implementation constraint, not legal advice.
 

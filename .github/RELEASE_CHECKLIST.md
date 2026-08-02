@@ -45,6 +45,18 @@ Optional Linux detached-signature secrets:
 
 Do not configure only part of a group. The optional policy rejects a partial macOS certificate/notary group or partial Windows group instead of silently downgrading it.
 
+### Local macOS Keychain alternative
+
+For a signed/notarized native-architecture build on a maintainer Mac, the local Keychain path avoids exporting the Developer ID private key. It does not replace the portable `.p12` group used by GitHub-hosted runners.
+
+- [ ] Confirm `security find-identity -v -p codesigning` lists the intended `Developer ID Application` certificate as valid.
+- [ ] Store notarization credentials interactively with `xcrun notarytool store-credentials PROFILE --apple-id APPLE_ID --team-id TEAM_ID`; for a custom Keychain add `--keychain /absolute/path/to/custom.keychain-db`. Do not pass the app-specific password on the command line.
+- [ ] Set `OUTREACHR_MAC_KEYCHAIN_IDENTITY`, `OUTREACHR_MAC_EXPECTED_TEAM_ID`, and `OUTREACHR_APPLE_KEYCHAIN_PROFILE`. For a custom Keychain, also set `OUTREACHR_APPLE_KEYCHAIN` to its absolute path.
+- [ ] Unset the portable `OUTREACHR_MAC_CERTIFICATE_*`, `OUTREACHR_APPLE_API_KEY_*`, and `OUTREACHR_APPLE_ID`/password/team credential groups; local and portable modes are mutually exclusive.
+- [ ] Run `pnpm release:mac:local`, then `node scripts/verify-code-signing.mjs --expect signed --release-dir apps/desktop/release`.
+- [ ] Confirm the exact Team ID, Gatekeeper assessment, app/DMG signatures, notarization tickets, and staples all pass before distributing the local artifacts.
+- [ ] Remember that this local command never publishes and cannot sign on an isolated hosted runner without separately configured portable secrets.
+
 ## Per release
 
 - [ ] Start from a clean, reviewed `main` commit with all required checks green.

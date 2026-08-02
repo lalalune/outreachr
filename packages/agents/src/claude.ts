@@ -45,6 +45,11 @@ export interface ClaudeAgentOptions {
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly defaultModel?: string;
   readonly requestTimeoutMs?: number;
+  /**
+   * Opt in only when Anthropic has approved this third-party integration.
+   * Authentication remains owned by the official local Claude Code session.
+   */
+  readonly allowSubscriptionAuth?: boolean;
   readonly clearEnvironmentCredential?: (source: 'anthropic-api-key') => Promise<void>;
   readonly onDiagnostic?: (message: string) => void;
 }
@@ -55,7 +60,10 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
   readonly #executable: string;
   readonly #queryFactory?: ClaudeQueryFactory;
   readonly #commandRunner: CommandRunner;
+  readonly #baseEnvironment: Readonly<NodeJS.ProcessEnv>;
   #environment: Readonly<NodeJS.ProcessEnv>;
+  #apiKey: string | undefined;
+  #subscriptionAuthApproved: boolean;
   readonly #defaultModel?: string;
   readonly #requestTimeoutMs: number;
   readonly #clearEnvironmentCredential?: ClaudeAgentOptions['clearEnvironmentCredential'];
@@ -77,7 +85,11 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
     // can initialize its local vault and render even when Claude is unused.
     this.#queryFactory = options.queryFactory;
     this.#commandRunner = options.commandRunner ?? nodeCommandRunner;
-    this.#environment = sanitizeClaudeEnvironment(options.environment ?? process.env);
+    const sourceEnvironment = options.environment ?? process.env;
+    this.#baseEnvironment = sanitizeClaudeEnvironment(sourceEnvironment, true);
+    this.#apiKey = sourceEnvironment.ANTHROPIC_API_KEY;
+    this.#subscriptionAuthApproved = options.allowSubscriptionAuth === true;
+    this.#environment = this.#buildEnvironment();
     this.#defaultModel = options.defaultModel;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 120_000;
     this.#clearEnvironmentCredential = options.clearEnvironmentCredential;
@@ -97,6 +109,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
           installed: false,
           authenticated: false,
           authSource: 'none',
+          subscriptionAuthApproved: this.#subscriptionAuthApproved,
           detail:
             firstNonEmptyLine(version.stderr) ??
             'Install the official Claude Code runtime and configure a founder-controlled Anthropic API key.',
@@ -109,6 +122,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
         version: firstNonEmptyLine(version.stdout),
         authenticated: authFromEnvironment !== 'none',
         authSource: authFromEnvironment,
+        subscriptionAuthApproved: this.#subscriptionAuthApproved,
       };
       if (authFromEnvironment !== 'none') return base;
       return await this.#readCliAuth(base);
@@ -118,6 +132,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
         installed: false,
         authenticated: false,
         authSource: 'none',
+        subscriptionAuthApproved: this.#subscriptionAuthApproved,
         detail: asAgentError(error).message,
       };
     }
@@ -134,31 +149,54 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
         'Claude credentials cannot change while a run is active.',
       );
     }
-    const environment: NodeJS.ProcessEnv = { ...this.#environment };
     if (value === null) {
-      delete environment.ANTHROPIC_API_KEY;
+      this.#apiKey = undefined;
     } else {
       const normalized = value.trim();
       if (normalized.length < 20 || normalized.length > 1_000 || /\s/u.test(normalized)) {
         throw new AgentRuntimeError('POLICY_DENIED', 'Anthropic API key format is invalid.');
       }
-      environment.ANTHROPIC_API_KEY = normalized;
+      this.#apiKey = normalized;
     }
-    this.#environment = sanitizeClaudeEnvironment(environment);
+    this.#environment = this.#buildEnvironment();
+  }
+
+  setSubscriptionAuthApproved(approved: boolean): void {
+    if (this.#active.size > 0) {
+      throw new AgentRuntimeError(
+        'POLICY_DENIED',
+        'Claude authentication mode cannot change while a run is active.',
+      );
+    }
+    this.#subscriptionAuthApproved = approved;
+    this.#environment = this.#buildEnvironment();
   }
 
   login(request: LoginRequest): Promise<LoginChallenge> {
     if (request.provider !== 'claude')
       return Promise.reject(new AgentRuntimeError('POLICY_DENIED', 'Provider/login mismatch.'));
-    if (
-      request.mode === 'official-cli' ||
-      request.mode === 'browser' ||
-      request.mode === 'setup-token'
-    ) {
+    if (request.mode === 'official-cli' || request.mode === 'browser') {
+      if (this.#subscriptionAuthApproved) {
+        return Promise.resolve({
+          provider: 'claude',
+          kind: 'external-command',
+          command: 'claude auth login --claudeai',
+          instructions:
+            'Run this official Claude Code command in a local terminal, complete the Claude.ai sign-in, then return to Outreachr and detect again. Claude Code owns the local keychain/config session; Outreachr never receives or persists its token.',
+        });
+      }
       return Promise.reject(
         new AgentRuntimeError(
           'POLICY_DENIED',
-          'Anthropic currently requires third-party Agent SDK products to use API-key or supported cloud-provider authentication. Outreachr does not route Claude subscription or setup-token credentials.',
+          'Claude subscription authentication is disabled. Enable Anthropic-approved subscription authentication only if Anthropic has approved this third-party integration.',
+        ),
+      );
+    }
+    if (request.mode === 'setup-token') {
+      return Promise.reject(
+        new AgentRuntimeError(
+          'POLICY_DENIED',
+          'Outreachr never accepts or passes CLAUDE_CODE_OAUTH_TOKEN setup tokens. Approved subscription access uses the official local Claude Code keychain/config session.',
         ),
       );
     }
@@ -194,7 +232,9 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
     }
     throw new AgentRuntimeError(
       'POLICY_DENIED',
-      'Outreachr has no supported Claude API-key session to log out. It will not modify an independent Claude subscription login.',
+      this.#subscriptionAuthApproved
+        ? 'Disable Anthropic-approved subscription authentication in Outreachr to disconnect it. Outreachr will not modify or log out the independent official Claude Code session.'
+        : 'Outreachr has no supported Claude API-key session to log out. It will not modify an independent Claude subscription login.',
     );
   }
 
@@ -242,7 +282,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
         options: {
           abortController,
           cwd: this.#workspaceDirectory,
-          env: { ...this.#environment, CLAUDE_AGENT_SDK_CLIENT_APP: 'outreachr/0.1.1' },
+          env: { ...this.#environment, CLAUDE_AGENT_SDK_CLIENT_APP: 'outreachr/0.1.2' },
           systemPrompt: prepared.system,
           tools: [],
           allowedTools: [...allowedMcpTools],
@@ -397,7 +437,7 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
       }
       return {
         ...base,
-        authenticated: false,
+        authenticated: this.#subscriptionAuthApproved,
         authSource: 'claude-code',
         ...(readString(value, 'email', 'account')
           ? { accountLabel: readString(value, 'email', 'account') }
@@ -405,8 +445,9 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
         ...(readString(value, 'subscriptionType', 'plan', 'subscription')
           ? { plan: readString(value, 'subscriptionType', 'plan', 'subscription') }
           : {}),
-        detail:
-          'Claude subscription credentials were detected but are not used. Anthropic currently directs third-party Agent SDK products to API-key or supported cloud-provider authentication.',
+        detail: this.#subscriptionAuthApproved
+          ? 'Using the official local Claude Code keychain/config session under the explicit Anthropic-approved subscription-authentication setting.'
+          : 'Claude subscription credentials were detected but are not used. Enable Anthropic-approved subscription authentication only if Anthropic has approved this third-party integration, or configure an API key.',
       };
     } catch {
       return {
@@ -417,6 +458,16 @@ export class ClaudeAgentAdapter implements AgentProviderAdapter {
           'Claude Code returned an unrecognized authentication status; Outreachr failed closed.',
       };
     }
+  }
+
+  #buildEnvironment(): Readonly<NodeJS.ProcessEnv> {
+    return sanitizeClaudeEnvironment(
+      {
+        ...this.#baseEnvironment,
+        ...(this.#apiKey === undefined ? {} : { ANTHROPIC_API_KEY: this.#apiKey }),
+      },
+      this.#subscriptionAuthApproved,
+    );
   }
 }
 
@@ -449,6 +500,7 @@ export const CLAUDE_DISALLOWED_TOOLS = [
 
 export function sanitizeClaudeEnvironment(
   source: Readonly<NodeJS.ProcessEnv>,
+  subscriptionAuthApproved = false,
 ): Readonly<NodeJS.ProcessEnv> {
   const names = [
     'HOME',
@@ -464,11 +516,13 @@ export function sanitizeClaudeEnvironment(
     'TEMP',
     'LANG',
     'LC_ALL',
-    'ANTHROPIC_API_KEY',
   ] as const;
   const clean: NodeJS.ProcessEnv = {};
   for (const name of names) if (source[name] !== undefined) clean[name] = source[name];
-  clean.CLAUDE_AGENT_SDK_CLIENT_APP = 'outreachr/0.1.1';
+  if (!subscriptionAuthApproved && source.ANTHROPIC_API_KEY !== undefined) {
+    clean.ANTHROPIC_API_KEY = source.ANTHROPIC_API_KEY;
+  }
+  clean.CLAUDE_AGENT_SDK_CLIENT_APP = 'outreachr/0.1.2';
   return clean;
 }
 

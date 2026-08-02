@@ -356,7 +356,7 @@ export function createOutreachrMcpServer(
   const now = options.now ?? (() => new Date());
   const createInvocationId = options.createInvocationId ?? randomUUID;
   const server = new McpServer(
-    { name: options.name ?? 'outreachr-local', version: options.version ?? '0.1.1' },
+    { name: options.name ?? 'outreachr-local', version: options.version ?? '0.1.2' },
     {
       instructions:
         'Outreachr is local-only. Use read tools for explicitly disclosed context and proposal tools to create founder-reviewable proposals. No tool can send a message, access OAuth credentials, run SQL, read files, or execute a shell. Never describe a proposal as applied.',

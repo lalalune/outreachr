@@ -109,6 +109,11 @@ export class SecureStore {
       ciphertext BLOB NOT NULL,
       updated_at TEXT NOT NULL
     )`);
+    this.#vault().run(`CREATE TABLE IF NOT EXISTS local_preferences (
+      key TEXT PRIMARY KEY,
+      value_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
   }
 
   status(): Promise<SecretStoreStatus> {
@@ -138,5 +143,32 @@ export class SecureStore {
 
   delete(key: string): void {
     this.#vault().run('DELETE FROM secure_secrets WHERE key=?', [key]);
+  }
+
+  /**
+   * Store a non-secret, device-local preference in the same SQLite vault.
+   * Preferences deliberately do not depend on Keychain/DPAPI/Secret Service,
+   * so policy choices remain available even when a secret backend is locked.
+   */
+  setPreference(key: string, value: unknown): void {
+    if (!/^[a-z0-9][a-z0-9._:/-]{1,199}$/iu.test(key))
+      throw new Error('Invalid local-preference key');
+    this.#vault().run(
+      `INSERT INTO local_preferences(key,value_json,updated_at) VALUES (?,?,?)
+       ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at`,
+      [key, JSON.stringify(value), new Date().toISOString()],
+    );
+  }
+
+  getPreference<T>(key: string): T | null {
+    const row = this.#vault().one<{ value_json: string }>(
+      'SELECT value_json FROM local_preferences WHERE key=?',
+      [key],
+    );
+    return row ? (JSON.parse(row.value_json) as T) : null;
+  }
+
+  deletePreference(key: string): void {
+    this.#vault().run('DELETE FROM local_preferences WHERE key=?', [key]);
   }
 }

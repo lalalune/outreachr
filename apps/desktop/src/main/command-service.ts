@@ -254,6 +254,16 @@ const commandSchemas: Record<keyof CommandMap, z.ZodType> = {
     })
     .strict(),
   'agent.credential.remove': z.object({ provider: z.literal('claude') }).strict(),
+  'agent.subscription.set': z.discriminatedUnion('approved', [
+    z
+      .object({
+        provider: z.literal('claude'),
+        approved: z.literal(true),
+        approvalConfirmed: z.literal(true),
+      })
+      .strict(),
+    z.object({ provider: z.literal('claude'), approved: z.literal(false) }).strict(),
+  ]),
   'agent.contextGrant.set': z.object({
     provider: agentProvider,
     contextClass: z.enum(['round', 'company', 'investors', 'activity']),
@@ -292,6 +302,8 @@ export class CommandService {
   readonly #connectors: ConnectorService;
   readonly #agents: AgentRuntimeController;
   readonly #emitAgentEvent: (event: AgentEvent) => void;
+  #commandsInFlight = 0;
+  #vaultRestoreInProgress = false;
 
   constructor(options: {
     vault: VaultService;
@@ -306,21 +318,29 @@ export class CommandService {
   }
 
   async bootstrap(): Promise<CommandResultMap['onboarding.complete']> {
-    const diagnostic = (stage: string): void => {
-      if (process.env.OUTREACHR_STARTUP_DIAGNOSTICS === '1') {
-        process.stderr.write(`[outreachr-startup] bootstrap ${stage}\n`);
-      }
-    };
-    diagnostic('connector statuses started');
-    const connectorStatuses = await this.#connectors.statuses();
-    diagnostic('connector statuses finished');
-    const agentStatuses = await this.#agents.statuses();
-    diagnostic('agent statuses finished');
-    this.#vault.setRuntimeStatuses(connectorStatuses, agentStatuses);
-    diagnostic('vault snapshot started');
-    const result = await this.#vault.bootstrap();
-    diagnostic('vault snapshot finished');
-    return result;
+    if (this.#vaultRestoreInProgress) {
+      throw new Error('Workspace refresh is unavailable while a backup restore is in progress');
+    }
+    this.#commandsInFlight += 1;
+    try {
+      const diagnostic = (stage: string): void => {
+        if (process.env.OUTREACHR_STARTUP_DIAGNOSTICS === '1') {
+          process.stderr.write(`[outreachr-startup] bootstrap ${stage}\n`);
+        }
+      };
+      diagnostic('connector statuses started');
+      const connectorStatuses = await this.#connectors.statuses();
+      diagnostic('connector statuses finished');
+      const agentStatuses = await this.#agents.statuses();
+      diagnostic('agent statuses finished');
+      this.#vault.setRuntimeStatuses(connectorStatuses, agentStatuses);
+      diagnostic('vault snapshot started');
+      const result = await this.#vault.bootstrap();
+      diagnostic('vault snapshot finished');
+      return result;
+    } finally {
+      this.#commandsInFlight -= 1;
+    }
   }
 
   async execute<K extends keyof CommandMap>(
@@ -330,246 +350,283 @@ export class CommandService {
     const schema = commandSchemas[name];
     if (!schema) throw new Error(`Unsupported command: ${String(name)}`);
     const payload = schema.parse(untrustedPayload) as CommandMap[K];
-    let result: unknown;
-    switch (name) {
-      case 'onboarding.complete':
-        result = await this.#vault.completeOnboarding(payload as CommandMap['onboarding.complete']);
-        break;
-      case 'investor.get':
-        result = await this.#vault.investorDetail((payload as CommandMap['investor.get']).id);
-        break;
-      case 'investor.create':
-        result = await this.#vault.createInvestor(payload as CommandMap['investor.create']);
-        break;
-      case 'investor.target': {
-        const value = payload as CommandMap['investor.target'];
-        result = await this.#vault.targetInvestor(value.id, value.target);
-        break;
-      }
-      case 'person.contact.add':
-        result = await this.#vault.addPersonContact(payload as CommandMap['person.contact.add']);
-        break;
-      case 'pipeline.move': {
-        const value = payload as CommandMap['pipeline.move'];
-        result = await this.#vault.moveInvestor(value.investorId, value.stage);
-        break;
-      }
-      case 'pipeline.amount': {
-        const value = payload as CommandMap['pipeline.amount'];
-        result = await this.#vault.updateExpectedCheck(value.investorId, value.expectedCheckUsd);
-        break;
-      }
-      case 'round.update':
-        result = await this.#vault.updateRound(payload as CommandMap['round.update']);
-        break;
-      case 'task.create':
-        result = await this.#vault.createTask(payload as CommandMap['task.create']);
-        break;
-      case 'task.update':
-        result = await this.#vault.updateTask(payload as CommandMap['task.update']);
-        break;
-      case 'meeting.create': {
-        const value = payload as CommandMap['meeting.create'];
-        // Resolve every selected canonical person before any provider side effect.
-        // This rejects missing or malformed attendee email records instead of
-        // silently creating a partially addressed calendar event.
-        this.#vault.calendarAttendees(value.personIds);
-        result = await this.#connectors.createMeeting(value);
-        break;
-      }
-      case 'meeting.update':
-        result = await this.#vault.updateMeeting(payload as CommandMap['meeting.update']);
-        break;
-      case 'knowledge.save':
-        result = await this.#vault.saveKnowledge(payload as CommandMap['knowledge.save']);
-        break;
-      case 'list.create':
-        result = await this.#vault.createList(payload as CommandMap['list.create']);
-        break;
-      case 'list.update':
-        result = await this.#vault.updateList(payload as CommandMap['list.update']);
-        break;
-      case 'draft.create':
-        result = await this.#vault.createDraft(payload as CommandMap['draft.create']);
-        break;
-      case 'draft.update': {
-        const { id: messageId, ...values } = payload as CommandMap['draft.update'];
-        result = await this.#vault.updateDraft(messageId, values);
-        break;
-      }
-      case 'draft.approve': {
-        const value = payload as CommandMap['draft.approve'];
-        result = await this.#vault.approveDraft(value.id, value.expectedContentHash);
-        break;
-      }
-      case 'draft.send': {
-        const value = payload as CommandMap['draft.send'];
-        result = await this.#connectors.sendApprovedDraft(value.id, value.expectedContentHash);
-        break;
-      }
-      case 'source.review': {
-        const value = payload as CommandMap['source.review'];
-        result = await this.#vault.reviewSource(value.id, value.decision);
-        break;
-      }
-      case 'connector.configure':
-        result = await this.#connectors.configure(payload as CommandMap['connector.configure']);
-        break;
-      case 'connector.connect':
-        result = await this.#connectors.connect(
-          (payload as CommandMap['connector.connect']).provider,
-        );
-        break;
-      case 'connector.disconnect':
-        result = await this.#connectors.disconnect(
-          (payload as CommandMap['connector.disconnect']).provider,
-        );
-        break;
-      case 'connector.test':
-        result = await this.#connectors.test((payload as CommandMap['connector.test']).provider);
-        break;
-      case 'connector.syncCalendar':
-        result = await this.#connectors.syncCalendar(
-          (payload as CommandMap['connector.syncCalendar']).provider,
-        );
-        break;
-      case 'connector.syncMail':
-        result = await this.#connectors.syncMail(
-          (payload as CommandMap['connector.syncMail']).provider,
-        );
-        break;
-      case 'mail.review':
-        result = await this.#vault.reviewMailEvent((payload as CommandMap['mail.review']).id);
-        break;
-      case 'communications.policy.update':
-        result = await this.#vault.updateCommunicationPolicy(
-          payload as CommandMap['communications.policy.update'],
-        );
-        break;
-      case 'suppression.add':
-        result = await this.#vault.addSuppression(payload as CommandMap['suppression.add']);
-        break;
-      case 'suppression.remove':
-        result = await this.#vault.removeSuppression(
-          (payload as CommandMap['suppression.remove']).id,
-        );
-        break;
-      case 'agent.detect':
-        result = await this.#agents.detect((payload as CommandMap['agent.detect']).provider);
-        break;
-      case 'agent.login':
-        result = await this.#agents.login((payload as CommandMap['agent.login']).provider);
-        break;
-      case 'agent.logout':
-        result = await this.#agents.logout((payload as CommandMap['agent.logout']).provider);
-        break;
-      case 'agent.credential.set': {
-        const value = payload as CommandMap['agent.credential.set'];
-        result = await this.#agents.setCredential(value.provider, value.credential);
-        break;
-      }
-      case 'agent.credential.remove':
-        result = await this.#agents.removeCredential(
-          (payload as CommandMap['agent.credential.remove']).provider,
-        );
-        break;
-      case 'agent.contextGrant.set':
-        result = await this.#vault.setAgentContextGrant(
-          payload as CommandMap['agent.contextGrant.set'],
-        );
-        break;
-      case 'agent.run': {
-        const value = payload as CommandMap['agent.run'];
-        const runId = `agent-run:${randomUUID()}`;
-        const createdAt = new Date().toISOString();
-        this.#vault.repository.createAgentRun({
-          id: runId,
-          provider: value.provider,
-          model: null,
-          purpose: value.prompt,
-          contextPolicy: { disclosedContextIds: value.disclosedContextIds },
-          status: 'running',
-          startedAt: createdAt,
-          completedAt: null,
-          errorDetail: null,
-          createdAt,
-        });
-        await this.#vault.persist();
-        result = await this.#agents.run({
-          runId,
-          provider: value.provider,
-          prompt: value.prompt,
-          context: await this.#vault.agentContext(value.disclosedContextIds),
-          disclosedContextIds: value.disclosedContextIds,
-          onEvent: async (event) => {
-            if (event.type === 'tool_proposal' && event.proposalId && event.proposal) {
-              this.#vault.repository.createAgentProposal({
-                id: event.proposalId,
-                agentRunId: runId,
-                proposalType: event.proposal.kind,
-                payload: event.proposal,
-                status: 'pending',
-                reviewedAt: null,
-                createdAt: new Date().toISOString(),
-              });
-            }
-            if (event.type === 'completed' || event.type === 'error') {
-              this.#vault.vault.run(
-                'UPDATE agent_runs SET status=?,completed_at=?,error_detail=? WHERE id=?',
-                [
-                  event.type === 'completed' ? 'completed' : 'failed',
-                  new Date().toISOString(),
-                  event.type === 'error' ? event.text : null,
-                  runId,
-                ],
-              );
-            }
-            await this.#vault.persist();
-            this.#emitAgentEvent(event);
-          },
-        });
-        break;
-      }
-      case 'agent.cancel':
-        result = await this.#agents.cancel((payload as CommandMap['agent.cancel']).runId);
-        break;
-      case 'agent.proposal.review':
-        result = await this.#vault.reviewAgentProposal(
-          payload as CommandMap['agent.proposal.review'],
-        );
-        break;
-      case 'backup.export': {
-        const value = payload as CommandMap['backup.export'];
-        result = { path: await this.#vault.exportBackup(value.directory, value.password) };
-        break;
-      }
-      case 'backup.restore': {
-        const value = payload as CommandMap['backup.restore'];
-        result = await this.#vault.restoreBackup(value.path, value.password);
-        break;
-      }
-      case 'contribution.export':
-        result = await this.#vault.exportContribution(
-          (payload as CommandMap['contribution.export']).directory,
-        );
-        break;
-      case 'data.importSeed':
-        result = await this.#vault.importSeedFile((payload as CommandMap['data.importSeed']).path);
-        break;
-      case 'data.exportCsv': {
-        const value = payload as CommandMap['data.exportCsv'];
-        result = { path: await this.#vault.exportCsv(value.directory, value.kind) };
-        break;
-      }
-      case 'data.reset':
-        result = await this.#vault.scheduleReset();
-        break;
-      case 'search':
-        result = this.#vault.search((payload as CommandMap['search']).query);
-        break;
-      default:
-        throw new Error(`Unsupported command: ${String(name)}`);
+    if (this.#vaultRestoreInProgress) {
+      throw new Error('Another command cannot start while a backup restore is in progress');
     }
-    return result as CommandResultMap[K];
+    const restoring = name === 'backup.restore';
+    if (restoring) {
+      if (this.#commandsInFlight > 0) {
+        throw new Error('A backup cannot be restored while another command is in progress');
+      }
+      this.#vaultRestoreInProgress = true;
+    } else {
+      this.#commandsInFlight += 1;
+    }
+    try {
+      let result: unknown;
+      switch (name) {
+        case 'onboarding.complete':
+          result = await this.#vault.completeOnboarding(
+            payload as CommandMap['onboarding.complete'],
+          );
+          break;
+        case 'investor.get':
+          result = await this.#vault.investorDetail((payload as CommandMap['investor.get']).id);
+          break;
+        case 'investor.create':
+          result = await this.#vault.createInvestor(payload as CommandMap['investor.create']);
+          break;
+        case 'investor.target': {
+          const value = payload as CommandMap['investor.target'];
+          result = await this.#vault.targetInvestor(value.id, value.target);
+          break;
+        }
+        case 'person.contact.add':
+          result = await this.#vault.addPersonContact(payload as CommandMap['person.contact.add']);
+          break;
+        case 'pipeline.move': {
+          const value = payload as CommandMap['pipeline.move'];
+          result = await this.#vault.moveInvestor(value.investorId, value.stage);
+          break;
+        }
+        case 'pipeline.amount': {
+          const value = payload as CommandMap['pipeline.amount'];
+          result = await this.#vault.updateExpectedCheck(value.investorId, value.expectedCheckUsd);
+          break;
+        }
+        case 'round.update':
+          result = await this.#vault.updateRound(payload as CommandMap['round.update']);
+          break;
+        case 'task.create':
+          result = await this.#vault.createTask(payload as CommandMap['task.create']);
+          break;
+        case 'task.update':
+          result = await this.#vault.updateTask(payload as CommandMap['task.update']);
+          break;
+        case 'meeting.create': {
+          const value = payload as CommandMap['meeting.create'];
+          // Resolve every selected canonical person before any provider side effect.
+          // This rejects missing or malformed attendee email records instead of
+          // silently creating a partially addressed calendar event.
+          this.#vault.calendarAttendees(value.personIds);
+          result = await this.#connectors.createMeeting(value);
+          break;
+        }
+        case 'meeting.update':
+          result = await this.#vault.updateMeeting(payload as CommandMap['meeting.update']);
+          break;
+        case 'knowledge.save':
+          result = await this.#vault.saveKnowledge(payload as CommandMap['knowledge.save']);
+          break;
+        case 'list.create':
+          result = await this.#vault.createList(payload as CommandMap['list.create']);
+          break;
+        case 'list.update':
+          result = await this.#vault.updateList(payload as CommandMap['list.update']);
+          break;
+        case 'draft.create':
+          result = await this.#vault.createDraft(payload as CommandMap['draft.create']);
+          break;
+        case 'draft.update': {
+          const { id: messageId, ...values } = payload as CommandMap['draft.update'];
+          result = await this.#vault.updateDraft(messageId, values);
+          break;
+        }
+        case 'draft.approve': {
+          const value = payload as CommandMap['draft.approve'];
+          result = await this.#vault.approveDraft(value.id, value.expectedContentHash);
+          break;
+        }
+        case 'draft.send': {
+          const value = payload as CommandMap['draft.send'];
+          result = await this.#connectors.sendApprovedDraft(value.id, value.expectedContentHash);
+          break;
+        }
+        case 'source.review': {
+          const value = payload as CommandMap['source.review'];
+          result = await this.#vault.reviewSource(value.id, value.decision);
+          break;
+        }
+        case 'connector.configure':
+          result = await this.#connectors.configure(payload as CommandMap['connector.configure']);
+          break;
+        case 'connector.connect':
+          result = await this.#connectors.connect(
+            (payload as CommandMap['connector.connect']).provider,
+          );
+          break;
+        case 'connector.disconnect':
+          result = await this.#connectors.disconnect(
+            (payload as CommandMap['connector.disconnect']).provider,
+          );
+          break;
+        case 'connector.test':
+          result = await this.#connectors.test((payload as CommandMap['connector.test']).provider);
+          break;
+        case 'connector.syncCalendar':
+          result = await this.#connectors.syncCalendar(
+            (payload as CommandMap['connector.syncCalendar']).provider,
+          );
+          break;
+        case 'connector.syncMail':
+          result = await this.#connectors.syncMail(
+            (payload as CommandMap['connector.syncMail']).provider,
+          );
+          break;
+        case 'mail.review':
+          result = await this.#vault.reviewMailEvent((payload as CommandMap['mail.review']).id);
+          break;
+        case 'communications.policy.update':
+          result = await this.#vault.updateCommunicationPolicy(
+            payload as CommandMap['communications.policy.update'],
+          );
+          break;
+        case 'suppression.add':
+          result = await this.#vault.addSuppression(payload as CommandMap['suppression.add']);
+          break;
+        case 'suppression.remove':
+          result = await this.#vault.removeSuppression(
+            (payload as CommandMap['suppression.remove']).id,
+          );
+          break;
+        case 'agent.detect':
+          result = await this.#agents.detect((payload as CommandMap['agent.detect']).provider);
+          break;
+        case 'agent.login':
+          result = await this.#agents.login((payload as CommandMap['agent.login']).provider);
+          break;
+        case 'agent.logout':
+          result = await this.#agents.logout((payload as CommandMap['agent.logout']).provider);
+          break;
+        case 'agent.credential.set': {
+          const value = payload as CommandMap['agent.credential.set'];
+          result = await this.#agents.setCredential(value.provider, value.credential);
+          break;
+        }
+        case 'agent.credential.remove':
+          result = await this.#agents.removeCredential(
+            (payload as CommandMap['agent.credential.remove']).provider,
+          );
+          break;
+        case 'agent.subscription.set': {
+          const value = payload as CommandMap['agent.subscription.set'];
+          result = await this.#agents.setSubscriptionAuthApproved(value.provider, value.approved);
+          break;
+        }
+        case 'agent.contextGrant.set':
+          result = await this.#vault.setAgentContextGrant(
+            payload as CommandMap['agent.contextGrant.set'],
+          );
+          break;
+        case 'agent.run': {
+          const value = payload as CommandMap['agent.run'];
+          const runId = `agent-run:${randomUUID()}`;
+          const createdAt = new Date().toISOString();
+          this.#vault.repository.createAgentRun({
+            id: runId,
+            provider: value.provider,
+            model: null,
+            purpose: value.prompt,
+            contextPolicy: { disclosedContextIds: value.disclosedContextIds },
+            status: 'running',
+            startedAt: createdAt,
+            completedAt: null,
+            errorDetail: null,
+            createdAt,
+          });
+          await this.#vault.persist();
+          result = await this.#agents.run({
+            runId,
+            provider: value.provider,
+            prompt: value.prompt,
+            context: await this.#vault.agentContext(value.disclosedContextIds),
+            disclosedContextIds: value.disclosedContextIds,
+            onEvent: async (event) => {
+              if (event.type === 'tool_proposal' && event.proposalId && event.proposal) {
+                this.#vault.repository.createAgentProposal({
+                  id: event.proposalId,
+                  agentRunId: runId,
+                  proposalType: event.proposal.kind,
+                  payload: event.proposal,
+                  status: 'pending',
+                  reviewedAt: null,
+                  createdAt: new Date().toISOString(),
+                });
+              }
+              if (event.type === 'completed' || event.type === 'error') {
+                this.#vault.vault.run(
+                  'UPDATE agent_runs SET status=?,completed_at=?,error_detail=? WHERE id=?',
+                  [
+                    event.type === 'completed' ? 'completed' : 'failed',
+                    new Date().toISOString(),
+                    event.type === 'error' ? event.text : null,
+                    runId,
+                  ],
+                );
+              }
+              await this.#vault.persist();
+              this.#emitAgentEvent(event);
+            },
+          });
+          break;
+        }
+        case 'agent.cancel':
+          result = await this.#agents.cancel((payload as CommandMap['agent.cancel']).runId);
+          break;
+        case 'agent.proposal.review':
+          result = await this.#vault.reviewAgentProposal(
+            payload as CommandMap['agent.proposal.review'],
+          );
+          break;
+        case 'backup.export': {
+          const value = payload as CommandMap['backup.export'];
+          result = { path: await this.#vault.exportBackup(value.directory, value.password) };
+          break;
+        }
+        case 'backup.restore': {
+          const value = payload as CommandMap['backup.restore'];
+          const releaseAgentRestore = this.#agents.beginVaultRestore();
+          try {
+            await this.#vault.restoreBackup(value.path, value.password);
+            // Rehydrate agent authorization first so any later status failure
+            // cannot leave pre-restore credentials active against the new vault.
+            const agentStatuses = await this.#agents.reloadAfterVaultRestore();
+            const connectorStatuses = await this.#connectors.statuses();
+            this.#vault.setRuntimeStatuses(connectorStatuses, agentStatuses);
+            result = await this.#vault.bootstrap();
+          } finally {
+            releaseAgentRestore();
+          }
+          break;
+        }
+        case 'contribution.export':
+          result = await this.#vault.exportContribution(
+            (payload as CommandMap['contribution.export']).directory,
+          );
+          break;
+        case 'data.importSeed':
+          result = await this.#vault.importSeedFile(
+            (payload as CommandMap['data.importSeed']).path,
+          );
+          break;
+        case 'data.exportCsv': {
+          const value = payload as CommandMap['data.exportCsv'];
+          result = { path: await this.#vault.exportCsv(value.directory, value.kind) };
+          break;
+        }
+        case 'data.reset':
+          result = await this.#vault.scheduleReset();
+          break;
+        case 'search':
+          result = this.#vault.search((payload as CommandMap['search']).query);
+          break;
+        default:
+          throw new Error(`Unsupported command: ${String(name)}`);
+      }
+      return result as CommandResultMap[K];
+    } finally {
+      if (restoring) this.#vaultRestoreInProgress = false;
+      else this.#commandsInFlight -= 1;
+    }
   }
 }

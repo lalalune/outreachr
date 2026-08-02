@@ -58,10 +58,50 @@ describe('ClaudeAgentAdapter', () => {
       installed: true,
       authenticated: false,
       authSource: 'claude-code',
+      subscriptionAuthApproved: false,
       accountLabel: 'founder@example.com',
       plan: 'max',
-      detail: expect.stringContaining('third-party Agent SDK products'),
+      detail: expect.stringContaining('Enable Anthropic-approved subscription authentication'),
     });
+  });
+
+  it('routes an explicitly approved official Claude Code session through local keychain/config', async () => {
+    let captured: Options | undefined;
+    const adapter = new ClaudeAgentAdapter({
+      workspaceDirectory: '/tmp/outreachr-agent',
+      queryFactory: ({ options }) => {
+        captured = options;
+        return fakeQuery([resultMessage()]);
+      },
+      commandRunner: installedWithCliAuth,
+      environment: {
+        PATH: '/bin',
+        HOME: '/tmp/founder-home',
+        ANTHROPIC_API_KEY: 'must-not-pass-in-subscription-mode',
+        CLAUDE_CODE_OAUTH_TOKEN: 'setup-token-must-never-pass',
+      },
+      allowSubscriptionAuth: true,
+    });
+
+    await expect(adapter.status()).resolves.toMatchObject({
+      authenticated: true,
+      authSource: 'claude-code',
+      subscriptionAuthApproved: true,
+      accountLabel: 'founder@example.com',
+      plan: 'max',
+      detail: expect.stringContaining('official local Claude Code keychain/config session'),
+    });
+    await expect(
+      adapter.run('run-subscription', runRequest('claude'), vi.fn()),
+    ).resolves.toMatchObject({
+      summary: 'One draft proposed.',
+    });
+    expect(captured?.env).toMatchObject({
+      PATH: '/bin',
+      HOME: '/tmp/founder-home',
+    });
+    expect(captured?.env?.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(captured?.env?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
   });
 
   it('ignores subscription setup tokens and recognizes founder-controlled API keys', async () => {
@@ -77,6 +117,7 @@ describe('ClaudeAgentAdapter', () => {
     await expect(setup.status()).resolves.toMatchObject({
       authenticated: false,
       authSource: 'none',
+      subscriptionAuthApproved: false,
     });
     const api = new ClaudeAgentAdapter({
       workspaceDirectory: '/tmp/outreachr-agent',
@@ -86,19 +127,20 @@ describe('ClaudeAgentAdapter', () => {
     await expect(api.status()).resolves.toMatchObject({
       authenticated: true,
       authSource: 'anthropic-api-key',
+      subscriptionAuthApproved: false,
     });
   });
 
-  it('offers API-key setup and rejects subscription credential routing', async () => {
+  it('offers API-key setup and gates official CLI login behind explicit approval', async () => {
     const adapter = new ClaudeAgentAdapter({
       workspaceDirectory: '/tmp/outreachr-agent',
       commandRunner: installedWithCliAuth,
     });
     await expect(adapter.login({ provider: 'claude', mode: 'official-cli' })).rejects.toThrow(
-      'third-party Agent SDK products',
+      'subscription authentication is disabled',
     );
     await expect(adapter.login({ provider: 'claude', mode: 'setup-token' })).rejects.toThrow(
-      'does not route Claude subscription',
+      'never accepts or passes CLAUDE_CODE_OAUTH_TOKEN',
     );
     await expect(adapter.login({ provider: 'claude', mode: 'api-key' })).resolves.toMatchObject({
       kind: 'environment',
@@ -109,6 +151,21 @@ describe('ClaudeAgentAdapter', () => {
       'requires a founder-controlled Anthropic API key',
     );
     await expect(adapter.login({ provider: 'codex', mode: 'browser' })).rejects.toThrow('mismatch');
+
+    adapter.setSubscriptionAuthApproved(true);
+    await expect(adapter.login({ provider: 'claude', mode: 'official-cli' })).resolves.toEqual({
+      provider: 'claude',
+      kind: 'external-command',
+      command: 'claude auth login --claudeai',
+      instructions: expect.stringContaining('official Claude Code command'),
+    });
+    await expect(adapter.login({ provider: 'claude', mode: 'browser' })).resolves.toMatchObject({
+      kind: 'external-command',
+      command: 'claude auth login --claudeai',
+    });
+    await expect(adapter.login({ provider: 'claude', mode: 'setup-token' })).rejects.toThrow(
+      'never accepts or passes CLAUDE_CODE_OAUTH_TOKEN',
+    );
   });
 
   it('hot-swaps only valid API keys and refuses credential changes during a run', async () => {
@@ -146,8 +203,24 @@ describe('ClaudeAgentAdapter', () => {
     expect(() => adapter.setApiKey('sk-ant-replacement-credential')).toThrow(
       'cannot change while a run is active',
     );
+    expect(() => adapter.setSubscriptionAuthApproved(true)).toThrow(
+      'cannot change while a run is active',
+    );
     release();
     await expect(pending).resolves.toMatchObject({ summary: 'One draft proposed.' });
+
+    adapter.setSubscriptionAuthApproved(true);
+    await expect(adapter.status()).resolves.toMatchObject({
+      authenticated: false,
+      authSource: 'none',
+      subscriptionAuthApproved: true,
+    });
+    adapter.setSubscriptionAuthApproved(false);
+    await expect(adapter.status()).resolves.toMatchObject({
+      authenticated: true,
+      authSource: 'anthropic-api-key',
+      subscriptionAuthApproved: false,
+    });
     adapter.setApiKey(null);
     await expect(adapter.status()).resolves.toMatchObject({
       authenticated: false,
@@ -200,7 +273,7 @@ describe('ClaudeAgentAdapter', () => {
     expect(captured?.options.disallowedTools).toEqual(CLAUDE_DISALLOWED_TOOLS);
     expect(captured?.options.env?.UNRELATED_SECRET).toBeUndefined();
     expect(captured?.options.env?.ANTHROPIC_API_KEY).toBe('secret');
-    expect(captured?.options.env?.CLAUDE_AGENT_SDK_CLIENT_APP).toBe('outreachr/0.1.1');
+    expect(captured?.options.env?.CLAUDE_AGENT_SDK_CLIENT_APP).toBe('outreachr/0.1.2');
     await expect(
       captured?.options.canUseTool?.(
         'Bash',
@@ -390,6 +463,22 @@ describe('ClaudeAgentAdapter', () => {
     await expect(cli.logout()).rejects.toThrow('will not modify an independent Claude');
     expect(cliRunner).not.toHaveBeenCalledWith('claude', ['auth', 'logout'], expect.any(Object));
 
+    const approvedCliRunner = vi.fn(installedWithCliAuth);
+    const approvedCli = new ClaudeAgentAdapter({
+      workspaceDirectory: '/tmp/outreachr-agent',
+      commandRunner: approvedCliRunner,
+      environment: { PATH: '/bin' },
+      allowSubscriptionAuth: true,
+    });
+    await expect(approvedCli.logout()).rejects.toThrow(
+      'will not modify or log out the independent official Claude Code session',
+    );
+    expect(approvedCliRunner).not.toHaveBeenCalledWith(
+      'claude',
+      ['auth', 'logout'],
+      expect.any(Object),
+    );
+
     const noClear = new ClaudeAgentAdapter({
       workspaceDirectory: '/tmp/outreachr-agent',
       commandRunner: installedWithCliAuth,
@@ -416,6 +505,19 @@ describe('ClaudeAgentAdapter', () => {
     });
     expect(clean.DATABASE_PASSWORD).toBeUndefined();
     expect(clean.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+
+    const subscriptionClean = sanitizeClaudeEnvironment(
+      {
+        PATH: '/bin',
+        HOME: '/home/founder',
+        ANTHROPIC_API_KEY: 'must-not-pass',
+        CLAUDE_CODE_OAUTH_TOKEN: 'must-not-pass',
+      },
+      true,
+    );
+    expect(subscriptionClean).toMatchObject({ PATH: '/bin', HOME: '/home/founder' });
+    expect(subscriptionClean.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(subscriptionClean.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
 
     const missing = new ClaudeAgentAdapter({
       workspaceDirectory: '/tmp/outreachr-agent',
