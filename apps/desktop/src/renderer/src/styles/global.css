@@ -364,7 +364,7 @@ p {
 }
 
 .app-shell--collapsed .brand-word,
-.app-shell--collapsed .round-switcher span,
+.app-shell--collapsed .round-switcher__copy,
 .app-shell--collapsed .round-switcher > svg,
 .app-shell--collapsed .command-trigger span,
 .app-shell--collapsed .command-trigger kbd,
@@ -418,7 +418,7 @@ p {
   border-radius: 50%;
 }
 
-.round-switcher > span {
+.round-switcher__copy {
   display: flex;
   min-width: 0;
   flex: 1;
@@ -594,8 +594,10 @@ kbd {
 .workspace {
   display: grid;
   min-width: 0;
+  min-height: 0;
   height: 100%;
   grid-template-rows: 48px minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .workspace-bar {
@@ -673,7 +675,10 @@ kbd {
 
 .main-content {
   min-width: 0;
-  overflow: auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   scroll-behavior: smooth;
 }
 
@@ -4780,7 +4785,7 @@ kbd {
   }
 
   .sidebar .brand-word,
-  .sidebar .round-switcher span,
+  .sidebar .round-switcher__copy,
   .sidebar .round-switcher > svg,
   .sidebar .command-trigger span,
   .sidebar .command-trigger kbd,
