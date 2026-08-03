@@ -63,6 +63,11 @@ test.describe('Outreachr built Electron application', () => {
     await completeOnboarding(page);
     const candidate = await candidateWithoutEmail(page);
 
+    const activeRoundDot = page.locator('.round-switcher__dot');
+    await expect(activeRoundDot).toHaveCSS('width', '8px');
+    await expect(activeRoundDot).toHaveCSS('height', '8px');
+    await expect(activeRoundDot).toHaveCSS('flex-grow', '0');
+
     await navigate(page, 'Investors');
     await page.getByRole('searchbox', { name: 'Search firms' }).fill(candidate.investorName);
     await expect(page.getByText('1 results')).toBeVisible();
