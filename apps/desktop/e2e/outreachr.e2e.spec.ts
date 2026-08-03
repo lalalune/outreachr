@@ -68,6 +68,20 @@ test.describe('Outreachr built Electron application', () => {
     await expect(page.getByText('1 results')).toBeVisible();
     await page.getByRole('button', { name: new RegExp(`^${candidate.investorName}`) }).click();
     await expect(page.getByRole('heading', { name: candidate.investorName })).toBeVisible();
+
+    const mainContent = page.locator('#main-content');
+    await expect
+      .poll(() => mainContent.evaluate((element) => element.scrollHeight > element.clientHeight))
+      .toBe(true);
+    await mainContent.hover();
+    await page.mouse.wheel(0, 800);
+    await expect
+      .poll(() => mainContent.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    await mainContent.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+
     await page.getByRole('button', { name: 'Add to round' }).click();
     await expect(page.getByRole('button', { name: 'In this round' })).toBeVisible();
 

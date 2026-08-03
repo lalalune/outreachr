@@ -594,8 +594,10 @@ kbd {
 .workspace {
   display: grid;
   min-width: 0;
+  min-height: 0;
   height: 100%;
   grid-template-rows: 48px minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .workspace-bar {
@@ -673,7 +675,10 @@ kbd {
 
 .main-content {
   min-width: 0;
-  overflow: auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   scroll-behavior: smooth;
 }
 
