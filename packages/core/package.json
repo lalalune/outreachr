@@ -31,7 +31,7 @@
   },
   "dependencies": {
     "sql.js": "1.14.1",
-    "zod": "3.25.76"
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
