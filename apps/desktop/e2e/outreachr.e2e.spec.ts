@@ -410,4 +410,27 @@ test.describe('Outreachr built Electron application', () => {
     await expectNoSeriousAxeViolations(page);
     expect(rendererErrors).toEqual([]);
   });
+
+  test('scrolls a long page from the main content panel', async ({ desktopApp, page }) => {
+    await desktopApp.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (!window) throw new Error('Outreachr window is unavailable');
+      window.setContentSize(1280, 768);
+    });
+    await completeOnboarding(page);
+
+    const main = page.locator('#main-content');
+    const dimensions = await main.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight);
+
+    const bounds = await main.boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+    await page.mouse.wheel(0, 1200);
+
+    await expect.poll(() => main.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  });
 });
