@@ -143,7 +143,7 @@ export function AppShell({ children }: PropsWithChildren): React.JSX.Element {
           aria-label={`Open active round: ${roundLabel}`}
         >
           <span className="round-switcher__dot" aria-hidden="true" />
-          <span>
+          <span className="round-switcher__copy">
             <small>Active round</small>
             <strong>{roundLabel}</strong>
           </span>

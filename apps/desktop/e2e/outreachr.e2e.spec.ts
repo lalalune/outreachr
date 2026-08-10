@@ -63,11 +63,30 @@ test.describe('Outreachr built Electron application', () => {
     await completeOnboarding(page);
     const candidate = await candidateWithoutEmail(page);
 
+    const activeRoundDot = page.locator('.round-switcher__dot');
+    await expect(activeRoundDot).toHaveCSS('width', '8px');
+    await expect(activeRoundDot).toHaveCSS('height', '8px');
+    await expect(activeRoundDot).toHaveCSS('flex-grow', '0');
+
     await navigate(page, 'Investors');
     await page.getByRole('searchbox', { name: 'Search firms' }).fill(candidate.investorName);
     await expect(page.getByText('1 results')).toBeVisible();
     await page.getByRole('button', { name: new RegExp(`^${candidate.investorName}`) }).click();
     await expect(page.getByRole('heading', { name: candidate.investorName })).toBeVisible();
+
+    const mainContent = page.locator('#main-content');
+    await expect
+      .poll(() => mainContent.evaluate((element) => element.scrollHeight > element.clientHeight))
+      .toBe(true);
+    await mainContent.hover();
+    await page.mouse.wheel(0, 800);
+    await expect
+      .poll(() => mainContent.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    await mainContent.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+
     await page.getByRole('button', { name: 'Add to round' }).click();
     await expect(page.getByRole('button', { name: 'In this round' })).toBeVisible();
 
