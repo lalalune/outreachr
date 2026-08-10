@@ -63,11 +63,30 @@ test.describe('Outreachr built Electron application', () => {
     await completeOnboarding(page);
     const candidate = await candidateWithoutEmail(page);
 
+    const activeRoundDot = page.locator('.round-switcher__dot');
+    await expect(activeRoundDot).toHaveCSS('width', '8px');
+    await expect(activeRoundDot).toHaveCSS('height', '8px');
+    await expect(activeRoundDot).toHaveCSS('flex-grow', '0');
+
     await navigate(page, 'Investors');
     await page.getByRole('searchbox', { name: 'Search firms' }).fill(candidate.investorName);
     await expect(page.getByText('1 results')).toBeVisible();
     await page.getByRole('button', { name: new RegExp(`^${candidate.investorName}`) }).click();
     await expect(page.getByRole('heading', { name: candidate.investorName })).toBeVisible();
+
+    const mainContent = page.locator('#main-content');
+    await expect
+      .poll(() => mainContent.evaluate((element) => element.scrollHeight > element.clientHeight))
+      .toBe(true);
+    await mainContent.hover();
+    await page.mouse.wheel(0, 800);
+    await expect
+      .poll(() => mainContent.evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
+    await mainContent.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+
     await page.getByRole('button', { name: 'Add to round' }).click();
     await expect(page.getByRole('button', { name: 'In this round' })).toBeVisible();
 
@@ -409,5 +428,28 @@ test.describe('Outreachr built Electron application', () => {
     ).toBeVisible();
     await expectNoSeriousAxeViolations(page);
     expect(rendererErrors).toEqual([]);
+  });
+
+  test('scrolls a long page from the main content panel', async ({ desktopApp, page }) => {
+    await desktopApp.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (!window) throw new Error('Outreachr window is unavailable');
+      window.setContentSize(1280, 768);
+    });
+    await completeOnboarding(page);
+
+    const main = page.locator('#main-content');
+    const dimensions = await main.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight);
+
+    const bounds = await main.boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.move(bounds!.x + bounds!.width / 2, bounds!.y + bounds!.height / 2);
+    await page.mouse.wheel(0, 1200);
+
+    await expect.poll(() => main.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   });
 });

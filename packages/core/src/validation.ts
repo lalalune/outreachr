@@ -250,7 +250,7 @@ export const ConnectorConfigSchema = z.object({
   id: IdSchema,
   provider: z.enum(['google', 'microsoft', 'codex', 'claude', 'custom']),
   accountLabel: z.string().max(500),
-  publicConfig: z.record(z.unknown()).default({}),
+  publicConfig: z.record(z.string(), z.unknown()).default({}),
   secretRef: z
     .string()
     .trim()
@@ -359,7 +359,7 @@ export const AgentRunSchema = z.object({
   provider: z.enum(['codex', 'claude', 'custom']),
   model: z.string().max(500).nullable().default(null),
   purpose: z.string().trim().min(1).max(5000),
-  contextPolicy: z.record(z.unknown()).default({}),
+  contextPolicy: z.record(z.string(), z.unknown()).default({}),
   status: z.enum(['queued', 'running', 'completed', 'failed', 'cancelled']).default('queued'),
   startedAt: IsoDateTimeSchema.nullable().default(null),
   completedAt: IsoDateTimeSchema.nullable().default(null),
