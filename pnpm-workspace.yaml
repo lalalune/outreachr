@@ -2,12 +2,6 @@ packages:
   - apps/*
   - packages/*
 
-overrides:
-  fast-uri: 3.1.5
-  hono: 4.12.34
-  js-yaml: 4.3.1
-  nanoid: 3.3.17
-
 autoInstallPeers: true
 strictPeerDependencies: false
 sharedWorkspaceLockfile: true
@@ -24,3 +18,6 @@ allowBuilds:
   electron-winstaller: true
   esbuild: true
   msw: true
+
+overrides:
+  js-yaml@>=4.0.0 <4.3.1: ^4.3.1

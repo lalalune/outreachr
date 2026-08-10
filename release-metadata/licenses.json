@@ -1642,7 +1642,7 @@
     },
     {
       "name": "@types/keyv",
-      "version": "3.1.5",
+      "version": "3.1.4",
       "license": "MIT",
       "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/keyv",
       "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
@@ -3426,7 +3426,7 @@
     },
     {
       "name": "hono",
-      "version": "4.12.34",
+      "version": "4.12.32",
       "license": "MIT",
       "homepage": "https://hono.dev",
       "repository": "git+https://github.com/honojs/hono.git",
@@ -3730,7 +3730,7 @@
     },
     {
       "name": "js-yaml",
-      "version": "4.3.1",
+      "version": "4.3.0",
       "license": "MIT",
       "homepage": null,
       "repository": "nodeca/js-yaml",
@@ -4138,7 +4138,7 @@
     },
     {
       "name": "nanoid",
-      "version": "3.3.17",
+      "version": "3.3.16",
       "license": "MIT",
       "homepage": null,
       "repository": "ai/nanoid",

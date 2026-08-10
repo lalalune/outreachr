@@ -257,8 +257,6 @@ async function invokeTool<ServiceSchema extends z.ZodTypeAny, FinalSchema extend
     const parsed = options.serviceOutputSchema.safeParse(untrustedOutput);
     if (!parsed.success) throw new SafeToolError('OUTPUT_REJECTED');
 
-    // Zod's generic TypeAny output is typed as `any`; safeParse has validated this boundary.
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     const redacted = options.redact(parsed.data, grant);
     const validated = options.finalOutputSchema.safeParse(redacted.value);
     if (!validated.success) throw new SafeToolError('OUTPUT_REJECTED');
@@ -275,7 +273,6 @@ async function invokeTool<ServiceSchema extends z.ZodTypeAny, FinalSchema extend
         redactedRecordCount: redacted.redactedRecordCount,
       },
       // Zod has validated the final envelope payload immediately above.
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       data: validated.data,
     });
 
