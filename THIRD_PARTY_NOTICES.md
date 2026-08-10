@@ -431,7 +431,7 @@ Outreachr is built with the following installed build and runtime dependencies. 
 | headers-polyfill                                | 5.0.1                | MIT                       | https://github.com/mswjs/headers-polyfill                                                            |
 | hermes-estree                                   | 0.25.1               | MIT                       | git@github.com:facebook/hermes.git                                                                   |
 | hermes-parser                                   | 0.25.1               | MIT                       | git@github.com:facebook/hermes.git                                                                   |
-| hono                                            | 4.12.34              | MIT                       | https://hono.dev                                                                                     |
+| hono                                            | 4.13.1               | MIT                       | https://hono.dev                                                                                     |
 | hosted-git-info                                 | 4.1.0                | ISC                       | https://github.com/npm/hosted-git-info                                                               |
 | html-encoding-sniffer                           | 6.0.0                | MIT                       | git+https://github.com/jsdom/html-encoding-sniffer.git                                               |
 | html-escaper                                    | 2.0.2                | MIT                       | https://github.com/WebReflection/html-escaper                                                        |
@@ -520,7 +520,7 @@ Outreachr is built with the following installed build and runtime dependencies. 
 | ms                                              | 2.1.3                | MIT                       | vercel/ms                                                                                            |
 | msw                                             | 2.15.0               | MIT                       | https://mswjs.io                                                                                     |
 | mute-stream                                     | 3.0.0                | ISC                       | git+https://github.com/npm/mute-stream.git                                                           |
-| nanoid                                          | 3.3.17               | MIT                       | ai/nanoid                                                                                            |
+| nanoid                                          | 3.3.18               | MIT                       | ai/nanoid                                                                                            |
 | natural-compare                                 | 1.4.0                | MIT                       | git://github.com/litejs/natural-compare-lite.git                                                     |
 | negotiator                                      | 1.0.0                | MIT                       | jshttp/negotiator                                                                                    |
 | node-abi                                        | 4.33.0               | MIT                       | https://github.com/electron/node-abi#readme                                                          |
@@ -2651,7 +2651,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### 2e0a854a11062f91280bdd32ad287d311a394f55e22b885948bfd965398327f9
 
-Applies to: hono@4.12.34
+Applies to: hono@4.13.1
 
 ```text
 MIT License
@@ -2729,7 +2729,7 @@ SOFTWARE.
 
 ### 33dc6a453e22e1f848a633be48c178791c3b07c70910c646f460e0100882aebe
 
-Applies to: nanoid@3.3.17
+Applies to: nanoid@3.3.18
 
 ```text
 The MIT License (MIT)

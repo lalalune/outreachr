@@ -3426,7 +3426,7 @@
     },
     {
       "name": "hono",
-      "version": "4.12.34",
+      "version": "4.13.1",
       "license": "MIT",
       "homepage": "https://hono.dev",
       "repository": "git+https://github.com/honojs/hono.git",
@@ -4138,7 +4138,7 @@
     },
     {
       "name": "nanoid",
-      "version": "3.3.17",
+      "version": "3.3.18",
       "license": "MIT",
       "homepage": null,
       "repository": "ai/nanoid",
