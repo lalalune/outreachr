@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@types/node": "24.13.3",
-    "@types/sql.js": "1.4.9",
+    "@types/sql.js": "1.4.11",
     "@vitest/coverage-v8": "4.1.10",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
