@@ -387,7 +387,7 @@ Outreachr is built with the following installed build and runtime dependencies. 
 | fast-sha256                                     | 1.3.0                | Unlicense                 | https://github.com/dchest/fast-sha256-js                                                             |
 | fast-string-truncated-width                     | 3.0.3                | MIT                       | github:fabiospampinato/fast-string-truncated-width                                                   |
 | fast-string-width                               | 3.0.2                | MIT                       | github:fabiospampinato/fast-string-width                                                             |
-| fast-uri                                        | 3.1.4                | BSD-3-Clause              | https://github.com/fastify/fast-uri                                                                  |
+| fast-uri                                        | 3.1.5                | BSD-3-Clause              | https://github.com/fastify/fast-uri                                                                  |
 | fast-wrap-ansi                                  | 0.2.2                | MIT                       | https://github.com/43081j/fast-wrap-ansi#readme                                                      |
 | fdir                                            | 6.5.0                | MIT                       | https://github.com/thecodrr/fdir#readme                                                              |
 | file-entry-cache                                | 8.0.0                | MIT                       | jaredwray/file-entry-cache                                                                           |
@@ -431,7 +431,7 @@ Outreachr is built with the following installed build and runtime dependencies. 
 | headers-polyfill                                | 5.0.1                | MIT                       | https://github.com/mswjs/headers-polyfill                                                            |
 | hermes-estree                                   | 0.25.1               | MIT                       | git@github.com:facebook/hermes.git                                                                   |
 | hermes-parser                                   | 0.25.1               | MIT                       | git@github.com:facebook/hermes.git                                                                   |
-| hono                                            | 4.12.32              | MIT                       | https://hono.dev                                                                                     |
+| hono                                            | 4.12.34              | MIT                       | https://hono.dev                                                                                     |
 | hosted-git-info                                 | 4.1.0                | ISC                       | https://github.com/npm/hosted-git-info                                                               |
 | html-encoding-sniffer                           | 6.0.0                | MIT                       | git+https://github.com/jsdom/html-encoding-sniffer.git                                               |
 | html-escaper                                    | 2.0.2                | MIT                       | https://github.com/WebReflection/html-escaper                                                        |
@@ -469,7 +469,7 @@ Outreachr is built with the following installed build and runtime dependencies. 
 | jose                                            | 6.2.5                | MIT                       | https://github.com/panva/jose                                                                        |
 | js-tokens                                       | 10.0.0               | MIT                       | lydell/js-tokens                                                                                     |
 | js-tokens                                       | 4.0.0                | MIT                       | lydell/js-tokens                                                                                     |
-| js-yaml                                         | 4.3.0                | MIT                       | nodeca/js-yaml                                                                                       |
+| js-yaml                                         | 4.3.1                | MIT                       | nodeca/js-yaml                                                                                       |
 | jsdom                                           | 30.0.1               | MIT                       | git+https://github.com/jsdom/jsdom.git                                                               |
 | jsesc                                           | 3.1.0                | MIT                       | https://mths.be/jsesc                                                                                |
 | json-buffer                                     | 3.0.1                | MIT                       | https://github.com/dominictarr/json-buffer                                                           |
@@ -520,7 +520,7 @@ Outreachr is built with the following installed build and runtime dependencies. 
 | ms                                              | 2.1.3                | MIT                       | vercel/ms                                                                                            |
 | msw                                             | 2.15.0               | MIT                       | https://mswjs.io                                                                                     |
 | mute-stream                                     | 3.0.0                | ISC                       | git+https://github.com/npm/mute-stream.git                                                           |
-| nanoid                                          | 3.3.16               | MIT                       | ai/nanoid                                                                                            |
+| nanoid                                          | 3.3.17               | MIT                       | ai/nanoid                                                                                            |
 | natural-compare                                 | 1.4.0                | MIT                       | git://github.com/litejs/natural-compare-lite.git                                                     |
 | negotiator                                      | 1.0.0                | MIT                       | jshttp/negotiator                                                                                    |
 | node-abi                                        | 4.33.0               | MIT                       | https://github.com/electron/node-abi#readme                                                          |
@@ -2651,7 +2651,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### 2e0a854a11062f91280bdd32ad287d311a394f55e22b885948bfd965398327f9
 
-Applies to: hono@4.12.32
+Applies to: hono@4.12.34
 
 ```text
 MIT License
@@ -2729,7 +2729,7 @@ SOFTWARE.
 
 ### 33dc6a453e22e1f848a633be48c178791c3b07c70910c646f460e0100882aebe
 
-Applies to: nanoid@3.3.16
+Applies to: nanoid@3.3.17
 
 ```text
 The MIT License (MIT)
@@ -11717,7 +11717,7 @@ SOFTWARE.
 
 ### b010b0dfdfdb23d7396e03b82cd4621fc9bb8f95d6b0aea70b9c24e12074c786
 
-Applies to: fast-uri@3.1.4
+Applies to: fast-uri@3.1.5
 
 ```text
 Copyright (c) 2011-2021, Gary Court until https://github.com/garycourt/uri-js/commit/a1acf730b4bba3f1097c9f52e7d9d3aba8cdcaae
@@ -12266,7 +12266,7 @@ THE SOFTWARE.
 
 ### bd470a9114ffb0c125553667203e65dce3ed50a339a3f5c43de24e225c040b7a
 
-Applies to: js-yaml@4.3.0
+Applies to: js-yaml@4.3.1
 
 ```text
 (The MIT License)
