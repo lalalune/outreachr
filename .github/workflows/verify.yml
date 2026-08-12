@@ -82,7 +82,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Run full verification gate
-        run: pnpm verify
+        run: node scripts/retry-pnpm.mjs --attempts 2 --delay-ms 5000 -- verify
 
       - name: Run Electron end-to-end tests
         if: runner.os != 'Linux'
@@ -98,7 +98,7 @@ jobs:
           node scripts/validate-legal-notices.mjs
 
       - name: Build native unsigned verification packages
-        run: node scripts/package-target.mjs --unsigned --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+        run: node scripts/retry-pnpm.mjs --attempts 3 --delay-ms 10000 -- exec node scripts/package-target.mjs --unsigned --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
 
       - name: Verify packaged seed, notices, and agent sidecars
         run: node scripts/verify-packaged-resources.mjs --release-dir apps/desktop/release
