@@ -33,7 +33,10 @@ export default defineConfig({
     build: {
       sourcemap: true,
       rollupOptions: {
-        input: resolve('src/main/index.ts'),
+        input: {
+          index: resolve('src/main/index.ts'),
+          'mcp-stdio': resolve('src/main/mcp-stdio-entry.ts'),
+        },
       },
     },
   },

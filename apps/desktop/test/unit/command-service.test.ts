@@ -466,6 +466,16 @@ describe('CommandService runtime boundary and workflows', () => {
       target: true,
       pipelineStage: 'partner_meeting',
     });
+    await expect(
+      service.execute('pipeline.nextAction', {
+        investorId: investor.id,
+        nextAction: '  Share the security brief  ',
+        nextActionAt: '2026-08-04T17:00:00.000Z',
+      }),
+    ).resolves.toMatchObject({
+      nextAction: 'Share the security brief',
+      nextActionAt: '2026-08-04T17:00:00.000Z',
+    });
 
     const task = await service.execute('task.create', {
       title: 'Review round strategy',

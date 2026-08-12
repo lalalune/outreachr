@@ -16,6 +16,7 @@
     "predev": "pnpm --dir ../.. prepare:runtime",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "mcp": "node ./out/main/mcp-stdio.js",
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",

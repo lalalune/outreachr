@@ -1,16 +1,35 @@
 import { useMemo, useState } from 'react';
-import { ArrowUpRight, CircleDollarSign, Filter, GripVertical, Search } from 'lucide-react';
+import {
+  ArrowUpRight,
+  CalendarClock,
+  CircleDollarSign,
+  Filter,
+  GripVertical,
+  Search,
+} from 'lucide-react';
 import { useNavigate } from '../lib/router';
 import type { InvestorSummary, PipelineStage } from '../../../shared/contracts';
-import { Badge, Button, EmptyState, formatMoney, PageHeader, titleCase } from '../components/ui';
+import {
+  Badge,
+  Button,
+  Dialog,
+  EmptyState,
+  formatDate,
+  formatMoney,
+  PageHeader,
+  TextField,
+  titleCase,
+} from '../components/ui';
 import { useWorkspace } from '../state/WorkspaceContext';
 
 function PipelineCard({
   investor,
   move,
+  editNextAction,
 }: {
   investor: InvestorSummary;
   move: (id: string, stage: PipelineStage) => Promise<void>;
+  editNextAction: (investor: InvestorSummary) => void;
 }): React.JSX.Element {
   const navigate = useNavigate();
   return (
@@ -76,8 +95,22 @@ function PipelineCard({
         <div className="pipeline-card__next">
           <span>Next</span>
           {investor.nextAction}
+          {investor.nextActionAt ? <small>{formatDate(investor.nextActionAt, true)}</small> : null}
         </div>
       ) : null}
+      {investor.lastMessageAt ? (
+        <div className="pipeline-card__last-message">
+          Last message · {formatDate(investor.lastMessageAt, true)}
+        </div>
+      ) : null}
+      <Button
+        tone="quiet"
+        size="small"
+        icon={<CalendarClock aria-hidden="true" />}
+        onClick={() => editNextAction(investor)}
+      >
+        {investor.nextAction ? 'Edit next action' : 'Set next action'}
+      </Button>
     </article>
   );
 }
@@ -86,6 +119,10 @@ export function PipelinePage(): React.JSX.Element {
   const { data, command, notify } = useWorkspace();
   const [query, setQuery] = useState('');
   const [showClosed, setShowClosed] = useState(false);
+  const [editing, setEditing] = useState<InvestorSummary | null>(null);
+  const [nextAction, setNextAction] = useState('');
+  const [nextActionAt, setNextActionAt] = useState('');
+  const [savingAction, setSavingAction] = useState(false);
   const investorById = useMemo(
     () => new Map((data?.investors ?? []).map((item) => [item.id, item])),
     [data?.investors],
@@ -105,6 +142,34 @@ export function PipelinePage(): React.JSX.Element {
       title: `Moved to ${titleCase(stage)}`,
       ...(investor ? { detail: investor.name } : {}),
     });
+  };
+
+  const editNextAction = (investor: InvestorSummary): void => {
+    setEditing(investor);
+    setNextAction(investor.nextAction ?? '');
+    setNextActionAt(
+      investor.nextActionAt ? new Date(investor.nextActionAt).toISOString().slice(0, 16) : '',
+    );
+  };
+
+  const saveNextAction = async (): Promise<void> => {
+    if (!editing) return;
+    setSavingAction(true);
+    try {
+      await command('pipeline.nextAction', {
+        investorId: editing.id,
+        nextAction: nextAction.trim() || null,
+        nextActionAt: nextActionAt ? new Date(nextActionAt).toISOString() : null,
+      });
+      setEditing(null);
+      notify({
+        tone: 'success',
+        title: nextAction.trim() ? 'Next action updated' : 'Next action cleared',
+        detail: editing.name,
+      });
+    } finally {
+      setSavingAction(false);
+    }
   };
 
   return (
@@ -163,7 +228,12 @@ export function PipelinePage(): React.JSX.Element {
                 </header>
                 <div className="pipeline-column__body">
                   {investors.map((investor) => (
-                    <PipelineCard key={investor.id} investor={investor} move={move} />
+                    <PipelineCard
+                      key={investor.id}
+                      investor={investor}
+                      move={move}
+                      editNextAction={editNextAction}
+                    />
                   ))}
                   {!investors.length ? (
                     <div className="pipeline-column__empty">
@@ -181,6 +251,39 @@ export function PipelinePage(): React.JSX.Element {
           detail="Add relevant investors from the universe, then advance them as the round progresses."
         />
       )}
+      <Dialog
+        open={Boolean(editing)}
+        onClose={() => setEditing(null)}
+        title="Plan the next action"
+        description={`Keep ${editing?.name ?? 'this investor'} moving with one concrete follow-up.`}
+        footer={
+          <>
+            <Button tone="quiet" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+            <Button tone="primary" loading={savingAction} onClick={() => void saveNextAction()}>
+              Save next action
+            </Button>
+          </>
+        }
+      >
+        <div className="form-grid">
+          <TextField
+            label="Next action"
+            value={nextAction}
+            onChange={(event) => setNextAction(event.target.value)}
+            placeholder="Send requested metrics"
+            maxLength={500}
+            autoFocus
+          />
+          <TextField
+            label="Due"
+            type="datetime-local"
+            value={nextActionAt}
+            onChange={(event) => setNextActionAt(event.target.value)}
+          />
+        </div>
+      </Dialog>
     </div>
   );
 }

@@ -910,6 +910,21 @@ export class VaultService {
 
   #investors(): InvestorSummary[] {
     const targets = this.#targetsByFirm();
+    const lastMessages = new Map(
+      this.#vault
+        .all<{ firm_id: string; last_message_at: string }>(
+          `SELECT firm_id,MAX(occurred_at) last_message_at FROM (
+             SELECT p.firm_id,COALESCE(s.completed_at,s.reserved_at) occurred_at
+             FROM send_ledger s JOIN people p ON p.id=s.recipient_person_id
+             WHERE p.firm_id IS NOT NULL
+             UNION ALL
+             SELECT p.firm_id,e.occurred_at
+             FROM mail_events e JOIN people p ON p.id=e.person_id
+             WHERE p.firm_id IS NOT NULL
+           ) GROUP BY firm_id`,
+        )
+        .map((row) => [row.firm_id, row.last_message_at]),
+    );
     const peopleCounts = new Map(
       this.#vault
         .all<{ firm_id: string; count: number }>(
@@ -994,6 +1009,7 @@ export class VaultService {
             : null,
           nextAction: target?.owner_note ?? null,
           nextActionAt: target?.next_action_at ?? null,
+          lastMessageAt: lastMessages.get(firm.id) ?? null,
           conflict: 'none',
           updatedAt: firm.updated_at,
         };
@@ -1964,6 +1980,35 @@ export class VaultService {
       expectedCheckUsd,
       ownerNote: target.owner_note,
       nextActionAt: target.next_action_at,
+      createdAt: target.created_at,
+      updatedAt: this.#now().toISOString(),
+    });
+    await this.persist();
+    return this.#investors().find((investor) => investor.id === investorId)!;
+  }
+
+  async updateNextAction(
+    investorId: string,
+    nextAction: string | null,
+    nextActionAt: string | null,
+  ): Promise<InvestorSummary> {
+    const target = this.#vault.one<TargetRow>(
+      'SELECT * FROM targets WHERE firm_id=? AND person_id IS NULL ORDER BY updated_at DESC LIMIT 1',
+      [investorId],
+    );
+    if (!target) throw new Error('Add this investor to the round before setting a next action');
+    this.#repository.upsertTarget({
+      id: target.id,
+      roundId: target.round_id,
+      firmId: target.firm_id,
+      personId: target.person_id,
+      stage: target.stage,
+      disposition: target.disposition,
+      priority: target.priority,
+      fitScore: target.fit_score,
+      expectedCheckUsd: target.expected_check_usd,
+      ownerNote: nextAction,
+      nextActionAt,
       createdAt: target.created_at,
       updatedAt: this.#now().toISOString(),
     });

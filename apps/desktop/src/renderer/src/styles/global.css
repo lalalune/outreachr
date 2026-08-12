@@ -555,6 +555,10 @@ kbd {
   border-top: 1px solid var(--border);
 }
 
+.sidebar__footer .nav-item {
+  color: var(--ink);
+}
+
 .vault-status {
   display: flex;
   align-items: center;
@@ -2488,6 +2492,24 @@ kbd {
   margin-right: 6px;
   color: var(--primary-text);
   font-weight: 650;
+}
+
+.pipeline-card__next small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted-soft);
+}
+
+.pipeline-card__last-message {
+  margin-top: 7px;
+  color: var(--muted-soft);
+  font-size: 0.6875rem;
+}
+
+.pipeline-card > .button {
+  width: 100%;
+  margin-top: 6px;
+  justify-content: flex-start;
 }
 
 .pipeline-column__empty {

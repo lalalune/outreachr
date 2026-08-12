@@ -80,6 +80,7 @@ export interface InvestorSummary {
   pipelineStage: PipelineStage | null;
   nextAction: string | null;
   nextActionAt: string | null;
+  lastMessageAt: string | null;
   conflict: 'none' | 'possible' | 'direct';
   updatedAt: string;
 }
@@ -434,6 +435,11 @@ export interface CommandMap {
       };
   'pipeline.move': { investorId: string; stage: PipelineStage };
   'pipeline.amount': { investorId: string; expectedCheckUsd: number | null };
+  'pipeline.nextAction': {
+    investorId: string;
+    nextAction: string | null;
+    nextActionAt: string | null;
+  };
   'round.update': {
     stage: RoundState['stage'];
     targetAmount: number;
@@ -530,6 +536,7 @@ export interface CommandResultMap {
   'person.contact.add': PersonSummary;
   'pipeline.move': AppBootstrap;
   'pipeline.amount': InvestorSummary;
+  'pipeline.nextAction': InvestorSummary;
   'round.update': RoundState;
   'task.create': TaskItem;
   'task.update': TaskItem;

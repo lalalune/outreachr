@@ -217,6 +217,41 @@ export class DesktopMcpBridge implements DesktopMcpController, OutreachrMcpServi
     this.#sessions.delete(runId);
   }
 
+  /**
+   * Bind the service adapter to one already-registered session for transports
+   * (such as stdio) that do not pass through the authenticated HTTP handler.
+   * The returned adapter retains the exact same authorization and audit checks.
+   */
+  serviceForSession(runId: string): OutreachrMcpService {
+    if (!this.#sessions.has(runId)) throw new Error('MCP session is not active.');
+    const bound = <T>(operation: () => T): T => this.#requestSession.run(runId, operation);
+    const service: OutreachrMcpService = {
+      authorizeAccess: (request, context) => bound(() => this.authorizeAccess(request, context)),
+      recordAuditEvent: (event) => bound(() => this.recordAuditEvent(event)),
+      searchInvestors: (query, context) => bound(() => this.searchInvestors(query, context)),
+      listInvestors: (query, context) => bound(() => this.listInvestors(query, context)),
+      getInvestor: (query, context) => bound(() => this.getInvestor(query, context)),
+      searchPeople: (query, context) => bound(() => this.searchPeople(query, context)),
+      listPeople: (query, context) => bound(() => this.listPeople(query, context)),
+      getPerson: (query, context) => bound(() => this.getPerson(query, context)),
+      getPipeline: (query, context) => bound(() => this.getPipeline(query, context)),
+      getRound: (query, context) => bound(() => this.getRound(query, context)),
+      listTasks: (query, context) => bound(() => this.listTasks(query, context)),
+      listMeetings: (query, context) => bound(() => this.listMeetings(query, context)),
+      listKnowledge: (query, context) => bound(() => this.listKnowledge(query, context)),
+      listActivity: (query, context) => bound(() => this.listActivity(query, context)),
+      proposeTarget: (input, context) => bound(() => this.proposeTarget(input, context)),
+      proposeStage: (input, context) => bound(() => this.proposeStage(input, context)),
+      proposeTask: (input, context) => bound(() => this.proposeTask(input, context)),
+      proposeMeeting: (input, context) => bound(() => this.proposeMeeting(input, context)),
+      proposeKnowledge: (input, context) => bound(() => this.proposeKnowledge(input, context)),
+      proposeDraft: (input, context) => bound(() => this.proposeDraft(input, context)),
+      proposeSourceReview: (input, context) =>
+        bound(() => this.proposeSourceReview(input, context)),
+    };
+    return Object.freeze(service);
+  }
+
   async dispose(): Promise<void> {
     if (this.#disposed) return;
     this.#disposed = true;

@@ -120,6 +120,11 @@ const commandSchemas: Record<keyof CommandMap, z.ZodType> = {
     investorId: id,
     expectedCheckUsd: z.number().int().nonnegative().nullable(),
   }),
+  'pipeline.nextAction': z.object({
+    investorId: id,
+    nextAction: z.string().trim().max(500).nullable(),
+    nextActionAt: z.string().datetime().nullable(),
+  }),
   'round.update': z.object({
     stage: z.enum(['pre_seed', 'seed', 'series_a']),
     targetAmount: z.number().int().positive(),
@@ -392,6 +397,15 @@ export class CommandService {
         case 'pipeline.amount': {
           const value = payload as CommandMap['pipeline.amount'];
           result = await this.#vault.updateExpectedCheck(value.investorId, value.expectedCheckUsd);
+          break;
+        }
+        case 'pipeline.nextAction': {
+          const value = payload as CommandMap['pipeline.nextAction'];
+          result = await this.#vault.updateNextAction(
+            value.investorId,
+            value.nextAction,
+            value.nextActionAt,
+          );
           break;
         }
         case 'round.update':

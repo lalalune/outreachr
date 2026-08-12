@@ -49,7 +49,20 @@ app.once('before-quit', () => {
 });
 ```
 
-There is intentionally no executable that loads an adapter from an environment-provided module or database path. The trusted host creates the adapter in process and injects it explicitly.
+The desktop build also emits `out/main/mcp-stdio.js` for trusted local Codex clients. It accepts only explicit vault and packaged-resource directories, creates the same desktop adapter in process, verifies SQLite and audit-chain integrity on startup, and exposes the desktop tool allowlist. It does not load arbitrary adapter modules.
+
+Build and register the local server with Codex:
+
+```sh
+pnpm --filter @outreachr/desktop build
+codex mcp add outreachr -- \
+  "$(command -v node)" \
+  "$PWD/apps/desktop/out/main/mcp-stdio.js" \
+  --data-directory "$HOME/Library/Application Support/@outreachr/desktop" \
+  --resource-directory "$PWD/apps/desktop/resources/generated"
+```
+
+The standalone stdio server and desktop UI should not edit the same SQL.js vault concurrently. Close Outreachr before starting a Codex task that uses the standalone server, then reopen the app to review any pending proposals. The MCP still cannot approve or send messages.
 
 ## Authorization and redaction
 

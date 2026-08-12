@@ -110,6 +110,44 @@ describe('renderer command flows', () => {
     expect(await screen.findByText('Expected check updated')).toBeVisible();
   });
 
+  it('sets a dated next action from the pipeline and shows the latest message date', async () => {
+    const fixture = bootstrapFixture();
+    fixture.investors[0] = {
+      ...fixture.investors[0]!,
+      target: true,
+      pipelineStage: 'diligence',
+      lastMessageAt: '2026-08-01T17:00:00.000Z',
+    };
+    fixture.counts.targeted = 1;
+    fixture.pipeline.find((column) => column.stage === 'diligence')!.targetIds = ['firm:test'];
+    const command = vi.fn(async (name: string) => {
+      if (name === 'pipeline.nextAction') return fixture.investors[0]!;
+      throw new Error(`Unexpected renderer test command: ${name}`);
+    });
+    const bridge = installBridge(fixture, command as never);
+    renderRoute('#/pipeline');
+
+    expect(await screen.findByRole('heading', { name: 'Pipeline' })).toBeVisible();
+    expect(screen.getByText(/Last message/u)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Set next action' }));
+    const dialog = screen.getByRole('dialog', { name: 'Plan the next action' });
+    fireEvent.change(within(dialog).getByLabelText('Next action'), {
+      target: { value: 'Send requested metrics' },
+    });
+    fireEvent.change(within(dialog).getByLabelText('Due'), {
+      target: { value: '2026-08-05T10:00' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save next action' }));
+
+    await waitFor(() =>
+      expect(bridge.command).toHaveBeenCalledWith('pipeline.nextAction', {
+        investorId: 'firm:test',
+        nextAction: 'Send requested metrics',
+        nextActionAt: new Date('2026-08-05T10:00').toISOString(),
+      }),
+    );
+  });
+
   it('trims and saves private agenda and outcome context for one meeting', async () => {
     const fixture = bootstrapFixture();
     const meeting: MeetingItem = {

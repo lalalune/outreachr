@@ -300,6 +300,11 @@ describe('VaultService with the production investor seed', () => {
     });
     await service.targetInvestor(investor.id, true);
     await service.moveInvestor(investor.id, 'diligence');
+    await service.updateNextAction(
+      investor.id,
+      'Send requested metrics',
+      '2026-08-05T17:00:00.000Z',
+    );
     await service.createTask({
       title: 'Confirm partner fit',
       notes: 'Private task notes',
@@ -338,6 +343,8 @@ describe('VaultService with the production investor seed', () => {
     expect(bootstrap.investors.find((item) => item.id === investor.id)).toMatchObject({
       target: true,
       pipelineStage: 'diligence',
+      nextAction: 'Send requested metrics',
+      nextActionAt: '2026-08-05T17:00:00.000Z',
     });
     expect(bootstrap.tasks.some((item) => item.title === 'Confirm partner fit')).toBe(true);
     expect(bootstrap.meetings.some((item) => item.title === 'Private partner call')).toBe(true);

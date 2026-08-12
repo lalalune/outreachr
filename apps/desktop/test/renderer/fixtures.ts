@@ -59,6 +59,7 @@ export function bootstrapFixture(firstRun = false): AppBootstrap {
         pipelineStage: null,
         nextAction: null,
         nextActionAt: null,
+        lastMessageAt: null,
         conflict: 'none',
         updatedAt: '2026-07-31T19:00:00.000Z',
       },
