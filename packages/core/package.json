@@ -34,10 +34,10 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@types/node": "24.13.3",
+    "@types/node": "26.2.0",
     "@types/sql.js": "1.4.11",
     "@vitest/coverage-v8": "4.1.10",
-    "typescript": "5.9.3",
+    "typescript": "7.0.2",
     "vitest": "4.1.10"
   },
   "license": "Apache-2.0"
