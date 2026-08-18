@@ -6,11 +6,10 @@ import ReactDOM from 'react-dom/client';
 import { HashRouter } from './lib/router';
 import { App } from './App';
 import { WorkspaceProvider } from './state/WorkspaceContext';
+import { getStoredTheme } from './lib/theme';
 import './styles/global.css';
 
-const storedTheme = window.localStorage.getItem('outreachr.theme');
-document.documentElement.dataset.theme =
-  storedTheme === 'dark' || storedTheme === 'system' ? storedTheme : 'light';
+document.documentElement.dataset.theme = getStoredTheme();
 
 const root = document.getElementById('root');
 

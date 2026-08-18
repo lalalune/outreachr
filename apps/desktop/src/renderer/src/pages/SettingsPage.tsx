@@ -19,6 +19,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useLocation, useNavigate } from '../lib/router';
+import { getStoredTheme, setStoredTheme } from '../lib/theme';
 import type { AgentProvider, ConnectorProvider, SuppressionItem } from '../../../shared/contracts';
 import {
   Badge,
@@ -1103,16 +1104,13 @@ export function SettingsPage(): React.JSX.Element {
   const [roundStatus, setRoundStatus] = useState<'planning' | 'active' | 'paused' | 'closed'>(
     'active',
   );
-  const [theme, setTheme] = useState<'light' | 'dark' | 'system'>(() => {
-    const stored = window.localStorage.getItem('outreachr.theme');
-    return stored === 'dark' || stored === 'system' ? stored : 'light';
-  });
+  const [theme, setTheme] = useState<'light' | 'dark' | 'system'>(getStoredTheme);
   const encryptionAvailable = useMemo(
     () => data?.connectors.every((item) => item.encryptionAvailable) ?? false,
     [data],
   );
   useEffect(() => {
-    window.localStorage.setItem('outreachr.theme', theme);
+    setStoredTheme(theme);
     document.documentElement.dataset.theme = theme;
   }, [theme]);
   if (!data) return <></>;
