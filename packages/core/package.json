@@ -30,7 +30,7 @@
     "node": ">=20"
   },
   "dependencies": {
-    "sql.js": "1.14.1",
+    "sql.js": "1.14.2",
     "zod": "4.4.3"
   },
   "devDependencies": {
