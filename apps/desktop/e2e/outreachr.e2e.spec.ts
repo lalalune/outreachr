@@ -429,7 +429,13 @@ test.describe('Outreachr built Electron application', () => {
     await page.keyboard.press('ControlOrMeta+k');
     const palette = page.getByRole('dialog', { name: 'Search Outreachr' });
     await expect(palette).toBeVisible();
-    await palette.getByRole('button', { name: /Browse the investor universe/u }).click();
+    await expect(palette.getByRole('textbox', { name: 'Search query' })).toBeFocused();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');
+    await expect(
+      palette.getByRole('button', { name: /Browse the investor universe/u }),
+    ).toBeFocused();
+    await page.keyboard.press('Enter');
     await expect(palette).toBeHidden();
     await expectNoSeriousAxeViolations(page);
     expect(rendererErrors).toEqual([]);
