@@ -426,6 +426,11 @@ test.describe('Outreachr built Electron application', () => {
     await expect(
       page.getByRole('heading', { name: 'Investor universe', exact: true }),
     ).toBeVisible();
+    await page.keyboard.press('ControlOrMeta+k');
+    const palette = page.getByRole('dialog', { name: 'Search Outreachr' });
+    await expect(palette).toBeVisible();
+    await palette.getByRole('button', { name: /Browse the investor universe/u }).click();
+    await expect(palette).toBeHidden();
     await expectNoSeriousAxeViolations(page);
     expect(rendererErrors).toEqual([]);
   });
