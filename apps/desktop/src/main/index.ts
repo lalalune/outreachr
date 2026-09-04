@@ -24,6 +24,7 @@ import {
 } from './navigation-security';
 import { ElectronSecretStoreBackend, SecureStore } from './secure-store';
 import { VaultService } from './vault-service';
+import { acquireWorkspaceLock } from './workspace-lock';
 
 let mainWindow: BrowserWindow | null = null;
 let vaultService: VaultService | null = null;
@@ -31,6 +32,7 @@ let agentService: DesktopAgentService | null = null;
 let mcpBridge: DesktopMcpBridge | null = null;
 let ipcRegistered = false;
 let shutdownStarted = false;
+let releaseWorkspaceLock: (() => void) | null = null;
 
 // electron-vite emits the main process as an ES module. Derive the bundle
 // directory from import.meta.url instead of relying on CommonJS' __dirname,
@@ -203,6 +205,7 @@ async function createWindow(
 async function start(): Promise<void> {
   const launchHooks = resolveDesktopLaunchHooks(process.env, app.isPackaged);
   if (launchHooks.e2eDataDirectory) app.setPath('userData', resolve(launchHooks.e2eDataDirectory));
+  releaseWorkspaceLock = acquireWorkspaceLock(app.getPath('userData'));
   startupDiagnostic('waiting for Electron ready');
   await app.whenReady();
   startupDiagnostic('Electron ready');
@@ -322,4 +325,9 @@ app.on('before-quit', (event) => {
     await Promise.allSettled([agentService?.dispose(), mcpBridge?.dispose()]);
     app.quit();
   })();
+});
+
+app.on('will-quit', () => {
+  releaseWorkspaceLock?.();
+  releaseWorkspaceLock = null;
 });

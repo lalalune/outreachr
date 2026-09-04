@@ -10,6 +10,7 @@ const workspacePackages = [
   '@modelcontextprotocol/sdk',
   '@anthropic-ai/claude-agent-sdk',
   'zod',
+  'proper-lockfile',
 ];
 
 const developmentCspPlugin = {

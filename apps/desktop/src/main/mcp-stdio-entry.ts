@@ -5,6 +5,7 @@ import { serveOutreachrMcpOverStdio, privateFieldSchema } from '@outreachr/mcp';
 
 import { DesktopMcpBridge } from './mcp-service';
 import { VaultService } from './vault-service';
+import { acquireWorkspaceLock } from './workspace-lock';
 
 const APP_VERSION = '0.1.2';
 const SESSION_ID = 'codex-local';
@@ -18,10 +19,12 @@ function argument(name: string): string {
 }
 
 async function main(): Promise<void> {
+  const dataDirectory = argument('--data-directory');
+  const releaseWorkspaceLock = acquireWorkspaceLock(dataDirectory);
   const vault = new VaultService({
     appVersion: APP_VERSION,
     platform: process.platform,
-    dataDirectory: argument('--data-directory'),
+    dataDirectory,
     resourceDirectory: argument('--resource-directory'),
   });
   await vault.initialize();
@@ -102,6 +105,7 @@ async function main(): Promise<void> {
     await running.close().catch(() => undefined);
     await bridge.dispose().catch(() => undefined);
     vault.vault.close();
+    releaseWorkspaceLock();
   };
   process.once('SIGINT', () => void close().finally(() => process.exit(0)));
   process.once('SIGTERM', () => void close().finally(() => process.exit(0)));
@@ -112,5 +116,5 @@ void main().catch((error: unknown) => {
   process.stderr.write(
     `Outreachr MCP failed: ${error instanceof Error ? error.message : String(error)}\n`,
   );
-  process.exitCode = 1;
+  process.exit(1);
 });
