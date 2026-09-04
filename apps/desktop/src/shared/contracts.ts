@@ -406,7 +406,26 @@ export interface FounderSetupInput {
   postalAddress?: string;
 }
 
+export interface InvestorCsvPreview {
+  sha256: string;
+  totalRows: number;
+  newInvestors: number;
+  newPeople: number;
+  skippedRows: number;
+  ignoredColumns: string[];
+  errors: Array<{ row: number; message: string }>;
+  rows: Array<{
+    row: number;
+    name: string;
+    personName: string | null;
+    email: string | null;
+    action: 'add' | 'skip' | 'error';
+  }>;
+}
+
 export interface CommandMap {
+  'data.previewInvestorCsv': { path: string };
+  'data.importInvestorCsv': { path: string; sha256: string };
   'onboarding.complete': FounderSetupInput;
   'investor.get': { id: string };
   'investor.create': {
@@ -417,6 +436,13 @@ export interface CommandMap {
     description?: string;
   };
   'investor.target': { id: string; target: boolean };
+  'person.create': {
+    firmId: string;
+    name: string;
+    title?: string;
+    workEmail?: string;
+    personalEmail?: string;
+  };
   'person.contact.add':
     | {
         personId: string;
@@ -530,11 +556,18 @@ export interface CommandMap {
 }
 
 export interface CommandResultMap {
+  'data.previewInvestorCsv': InvestorCsvPreview;
+  'data.importInvestorCsv': {
+    importedInvestors: number;
+    importedPeople: number;
+    skippedRows: number;
+  };
   'onboarding.complete': AppBootstrap;
   'investor.get': InvestorDetail;
   'investor.create': InvestorSummary;
   'investor.target': AppBootstrap;
   'person.contact.add': PersonSummary;
+  'person.create': PersonSummary;
   'pipeline.move': AppBootstrap;
   'pipeline.amount': InvestorSummary;
   'pipeline.nextAction': InvestorSummary;

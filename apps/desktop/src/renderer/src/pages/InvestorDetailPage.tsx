@@ -29,6 +29,7 @@ import {
   titleCase,
 } from '../components/ui';
 import { useWorkspace } from '../state/WorkspaceContext';
+import { AddPersonButton } from '../components/AddPersonButton';
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 const detailSectionIds = new Set(['people', 'thesis', 'portfolio', 'sources', 'activity']);
@@ -622,6 +623,13 @@ export function InvestorDetailPage(): React.JSX.Element {
       <Section
         title="Relevant people"
         description="Contact and relationship state belongs to the canonical person, not only the firm."
+        action={
+          <AddPersonButton
+            firmId={investor.id}
+            firmName={investor.name}
+            onSaved={async () => setInvestor(await getInvestor(investor.id))}
+          />
+        }
         className="detail-section"
       >
         <div id="people" className="people-list">
@@ -632,7 +640,7 @@ export function InvestorDetailPage(): React.JSX.Element {
           ) : (
             <EmptyState
               title="No partner records yet"
-              detail="Add or research a partner before planning outreach."
+              detail="Add a person and their email to plan outreach."
             />
           )}
         </div>

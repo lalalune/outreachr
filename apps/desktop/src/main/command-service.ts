@@ -29,6 +29,10 @@ function professionalProfileUrl(hostnames: readonly string[], label: string): z.
 }
 
 const commandSchemas: Record<keyof CommandMap, z.ZodType> = {
+  'data.previewInvestorCsv': z.object({ path: z.string().min(1).max(4_096) }).strict(),
+  'data.importInvestorCsv': z
+    .object({ path: z.string().min(1).max(4_096), sha256: z.string().regex(/^[a-f0-9]{64}$/u) })
+    .strict(),
   'onboarding.complete': z.object({
     founderName: z.string().trim().min(1).max(300),
     founderEmail: z.string().email(),
@@ -65,6 +69,15 @@ const commandSchemas: Record<keyof CommandMap, z.ZodType> = {
     description: z.string().max(100_000).optional(),
   }),
   'investor.target': z.object({ id, target: z.boolean() }),
+  'person.create': z
+    .object({
+      firmId: id,
+      name: z.string().trim().min(1).max(500),
+      title: z.string().trim().max(500).optional(),
+      workEmail: z.string().trim().email().max(320).optional(),
+      personalEmail: z.string().trim().email().max(320).optional(),
+    })
+    .strict(),
   'person.contact.add': z.discriminatedUnion('kind', [
     z.object({
       personId: id,
@@ -375,6 +388,16 @@ export class CommandService {
     try {
       let result: unknown;
       switch (name) {
+        case 'data.previewInvestorCsv':
+          result = await this.#vault.previewInvestorCsv(
+            (payload as CommandMap['data.previewInvestorCsv']).path,
+          );
+          break;
+        case 'data.importInvestorCsv': {
+          const value = payload as CommandMap['data.importInvestorCsv'];
+          result = await this.#vault.importInvestorCsv(value.path, value.sha256);
+          break;
+        }
         case 'onboarding.complete':
           result = await this.#vault.completeOnboarding(
             payload as CommandMap['onboarding.complete'],
@@ -393,6 +416,9 @@ export class CommandService {
         }
         case 'person.contact.add':
           result = await this.#vault.addPersonContact(payload as CommandMap['person.contact.add']);
+          break;
+        case 'person.create':
+          result = await this.#vault.createPerson(payload as CommandMap['person.create']);
           break;
         case 'pipeline.move': {
           const value = payload as CommandMap['pipeline.move'];

@@ -59,7 +59,7 @@ export function WorkspaceProvider({ children }: PropsWithChildren): React.JSX.El
 
   const notify = useCallback((toast: Omit<ToastMessage, 'id'>) => {
     const id = Date.now() + Math.floor(Math.random() * 1000);
-    setToasts((current) => [...current, { ...toast, id }]);
+    setToasts((current) => [...current.slice(-2), { ...toast, id }]);
     window.setTimeout(() => {
       setToasts((current) => current.filter((item) => item.id !== id));
     }, 5000);
@@ -132,7 +132,8 @@ export function WorkspaceProvider({ children }: PropsWithChildren): React.JSX.El
           name.startsWith('suppression.') ||
           name.startsWith('person.') ||
           name.startsWith('agent.') ||
-          name.startsWith('knowledge.')
+          name.startsWith('knowledge.') ||
+          name === 'data.importInvestorCsv'
         ) {
           await load(true);
         }
