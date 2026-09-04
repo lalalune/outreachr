@@ -472,9 +472,26 @@ export class ConnectorService {
   async configure(input: {
     provider: ConnectorProvider;
     clientId: string;
+    clientSecret?: string;
     tenantId?: string;
     relationshipSync: boolean;
   }): Promise<ConnectorStatus> {
+    if (input.provider !== 'google' && input.clientSecret !== undefined) {
+      throw new Error('Microsoft desktop clients do not use a client secret');
+    }
+    const clientId = input.clientId.trim();
+    const previousClientId = this.#config(input.provider)?.publicConfig.clientId;
+    if (input.provider === 'google') {
+      if (input.clientSecret?.trim()) {
+        await this.#secureStore.set('oauth/google/client', {
+          clientId,
+          clientSecret: input.clientSecret.trim(),
+        });
+      } else if (previousClientId !== clientId) {
+        this.#secureStore.delete('oauth/google/client');
+      }
+    }
+    this.#secureStore.delete(secretKey(input.provider));
     const now = this.#now().toISOString();
     const scopes = getScopes(
       input.provider,
@@ -485,7 +502,7 @@ export class ConnectorService {
       provider: input.provider,
       accountLabel: `${input.provider}:configured`,
       publicConfig: {
-        clientId: input.clientId.trim(),
+        clientId,
         ...(input.provider === 'microsoft' ? { tenantId: input.tenantId?.trim() || 'common' } : {}),
         relationshipSync: input.relationshipSync,
       },
@@ -517,10 +534,15 @@ export class ConnectorService {
         this.#authorizeForTest,
       );
       const callback = validateOAuthCallback(callbackUrl, prepared.state);
+      const clientSecret =
+        provider === 'google'
+          ? await this.#googleClientSecret(config.publicConfig.clientId)
+          : undefined;
       const tokens = await exchangeAuthorizationCode({
         provider,
         fetch: this.#fetch,
         clientId: config.publicConfig.clientId,
+        ...(clientSecret ? { clientSecret } : {}),
         code: callback.code,
         codeVerifier: prepared.pkce.verifier,
         redirectUri: prepared.redirectUri,
@@ -559,6 +581,7 @@ export class ConnectorService {
   async disconnect(provider: ConnectorProvider): Promise<ConnectorStatus> {
     const now = this.#now().toISOString();
     this.#secureStore.delete(secretKey(provider));
+    if (provider === 'google') this.#secureStore.delete('oauth/google/client');
     this.#vault.vault.run(
       "UPDATE connector_configs SET status='disabled',updated_at=? WHERE id=?",
       [now, connectorId(provider)],
@@ -869,10 +892,15 @@ export class ConnectorService {
       throw new Error(
         `${provider} access expired and no refresh token is available; reconnect the account`,
       );
+    const clientSecret =
+      provider === 'google'
+        ? await this.#googleClientSecret(config.publicConfig.clientId)
+        : undefined;
     const refreshed = await refreshAccessToken({
       provider,
       fetch: this.#fetch,
       clientId: config.publicConfig.clientId,
+      ...(clientSecret ? { clientSecret } : {}),
       refreshToken: tokens.refreshToken,
       scopes: config.scopes,
       ...(config.publicConfig.tenantId ? { tenant: config.publicConfig.tenantId } : {}),
@@ -886,6 +914,13 @@ export class ConnectorService {
     await this.#secureStore.set(secretKey(provider), updated);
     await this.#vault.persist();
     return updated.accessToken;
+  }
+
+  async #googleClientSecret(clientId: string): Promise<string | undefined> {
+    const credential = await this.#secureStore.get<{ clientId: string; clientSecret: string }>(
+      'oauth/google/client',
+    );
+    return credential?.clientId === clientId ? credential.clientSecret : undefined;
   }
 
   async sendApprovedDraft(id: string, expectedContentHash: string): Promise<DraftMessage> {

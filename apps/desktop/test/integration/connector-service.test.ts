@@ -187,6 +187,77 @@ describe('ConnectorService with MSW provider boundaries', () => {
     expect(disconnectAudit?.detail_json).not.toContain('founder-owned-desktop-client');
   });
 
+  it('encrypts the Google Desktop secret and reuses it for expired-token refresh', async () => {
+    successfulGoogleHandlers();
+    const grants: string[] = [];
+    server.use(
+      http.post(tokenEndpoint('google'), async ({ request }) => {
+        const body = new URLSearchParams(await request.text());
+        expect(body.get('client_secret')).toBe('founder-desktop-secret');
+        grants.push(body.get('grant_type')!);
+        return HttpResponse.json({
+          access_token: 'google-access',
+          refresh_token: 'google-refresh',
+          token_type: 'Bearer',
+          expires_in: grants.length === 1 ? 0 : 3600,
+        });
+      }),
+    );
+    const { vault, secureStore, connector } = await fixture();
+    await connector.configure({
+      provider: 'google',
+      clientId: 'founder-owned-desktop-client',
+      clientSecret: 'founder-desktop-secret',
+      relationshipSync: false,
+    });
+    await connector.connect('google');
+    await connector.test('google');
+    expect(grants).toEqual(['authorization_code', 'refresh_token']);
+    expect(JSON.stringify(await vault.bootstrap())).not.toContain('founder-desktop-secret');
+    expect(JSON.stringify(await connector.statuses())).not.toContain('founder-desktop-secret');
+    expect(
+      Buffer.from(await readFile(vault.vaultPath)).includes(Buffer.from('founder-desktop-secret')),
+    ).toBe(false);
+    expect(
+      String(
+        vault.vault.scalar('SELECT public_config_json FROM connector_configs WHERE id=?', [
+          'connector:google',
+        ]),
+      ),
+    ).not.toContain('founder-desktop-secret');
+    await connector.configure({
+      provider: 'google',
+      clientId: 'founder-owned-desktop-client',
+      relationshipSync: false,
+    });
+    await expect(secureStore.get('oauth/google/client')).resolves.toMatchObject({
+      clientSecret: 'founder-desktop-secret',
+    });
+    await connector.configure({
+      provider: 'google',
+      clientId: 'another-client',
+      relationshipSync: false,
+    });
+    await expect(secureStore.get('oauth/google/client')).resolves.toBeNull();
+    await expect(secureStore.get('oauth/google/tokens')).resolves.toBeNull();
+    await connector.configure({
+      provider: 'google',
+      clientId: 'another-client',
+      clientSecret: 'replacement-secret',
+      relationshipSync: false,
+    });
+    await connector.disconnect('google');
+    await expect(secureStore.get('oauth/google/client')).resolves.toBeNull();
+    await expect(
+      connector.configure({
+        provider: 'microsoft',
+        clientId: 'microsoft-client',
+        clientSecret: 'rejected',
+        relationshipSync: false,
+      }),
+    ).rejects.toThrow('Microsoft desktop clients');
+  });
+
   it('rebinds connector secrets to the authenticated replacement vault after backup restore', async () => {
     successfulGoogleHandlers();
     const { vault, secureStore, connector } = await fixture();

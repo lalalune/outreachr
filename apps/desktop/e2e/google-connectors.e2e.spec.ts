@@ -37,6 +37,7 @@ test.describe('Google connectors through the built Electron IPC boundary', () =>
     await googleSection
       .getByRole('textbox', { name: 'Application (client) ID' })
       .fill('e2e-founder-owned-desktop-client');
+    await googleSection.getByLabel('Desktop client secret').fill('e2e-google-desktop-secret');
     await googleSection.getByRole('checkbox', { name: /Enable relationship sync/u }).check();
     await googleSection.getByRole('button', { name: 'Save and connect in browser' }).click();
 
@@ -47,7 +48,10 @@ test.describe('Google connectors through the built Electron IPC boundary', () =>
     expect(tokenRequest.get('grant_type')).toBe('authorization_code');
     expect(tokenRequest.get('code')).toBe('outreachr-e2e-google-code');
     expect(tokenRequest.get('code_verifier')).toMatch(/^[A-Za-z0-9_-]{43,128}$/u);
-    expect(tokenRequest.has('client_secret')).toBe(false);
+    expect(tokenRequest.get('client_secret')).toBe('e2e-google-desktop-secret');
+    expect(JSON.stringify(await page.evaluate(() => window.outreachr.bootstrap()))).not.toContain(
+      'e2e-google-desktop-secret',
+    );
 
     await googleSection.getByRole('button', { name: 'Sync mail history' }).click();
     await expect(

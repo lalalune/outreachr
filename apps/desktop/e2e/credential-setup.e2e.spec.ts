@@ -21,7 +21,7 @@ test.describe('Founder credential setup through the built Electron boundary', ()
       'autocomplete',
       'off',
     );
-    await expect(google.locator('input[type="password"]')).toHaveCount(0);
+    await expect(google.getByLabel('Desktop client secret')).toHaveAttribute('type', 'password');
 
     const microsoft = page.locator('section').filter({
       has: page.getByRole('heading', { name: 'Microsoft 365', exact: true }),

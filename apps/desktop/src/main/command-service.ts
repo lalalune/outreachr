@@ -217,12 +217,17 @@ const commandSchemas: Record<keyof CommandMap, z.ZodType> = {
   'draft.approve': z.object({ id, expectedContentHash: z.string().regex(/^[a-f0-9]{64}$/u) }),
   'draft.send': z.object({ id, expectedContentHash: z.string().regex(/^[a-f0-9]{64}$/u) }),
   'source.review': z.object({ id, decision: z.enum(['accept', 'reject']) }),
-  'connector.configure': z.object({
-    provider,
-    clientId: z.string().trim().min(1).max(1_000),
-    tenantId: z.string().trim().max(500).optional(),
-    relationshipSync: z.boolean(),
-  }),
+  'connector.configure': z
+    .object({
+      provider,
+      clientId: z.string().trim().min(1).max(1_000),
+      clientSecret: z.string().trim().min(1).max(1_000).optional(),
+      tenantId: z.string().trim().max(500).optional(),
+      relationshipSync: z.boolean(),
+    })
+    .refine((input) => input.provider === 'google' || input.clientSecret === undefined, {
+      message: 'Microsoft desktop clients do not use a client secret',
+    }),
   'connector.connect': z.object({ provider }),
   'connector.disconnect': z.object({ provider }),
   'connector.test': z.object({ provider }),

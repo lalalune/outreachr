@@ -47,6 +47,7 @@ export interface ExchangeAuthorizationCodeInput {
   provider: ConnectorProvider;
   fetch: FetchLike;
   clientId: string;
+  clientSecret?: string;
   code: string;
   codeVerifier: string;
   redirectUri: string;
@@ -58,6 +59,7 @@ export interface RefreshAccessTokenInput {
   provider: ConnectorProvider;
   fetch: FetchLike;
   clientId: string;
+  clientSecret?: string;
   refreshToken: string;
   scopes?: string[];
   tenant?: string;
@@ -240,26 +242,42 @@ async function postToken(
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body,
     });
-  } catch (cause) {
+  } catch {
     throw new ConnectorError({
       provider,
       operation,
       code: 'NETWORK_ERROR',
       message: 'OAuth token endpoint could not be reached',
       retryable: true,
-      cause,
     });
   }
   const json = (await response.json().catch(() => ({}))) as TokenJson;
   if (!response.ok || !json.access_token) {
+    // Token endpoint diagnostics can echo submitted credentials. Expose only
+    // known error codes and our own messages across the renderer/log boundary.
+    const messages: Record<string, string> = {
+      invalid_client:
+        'OAuth client credentials were rejected; check the client ID and Desktop client secret.',
+      invalid_grant: 'OAuth authorization expired or was revoked; reconnect the account.',
+      invalid_request: 'OAuth token request was rejected; check the Desktop client configuration.',
+      invalid_scope: 'OAuth scopes were rejected; check the provider permissions.',
+      unauthorized_client: 'This OAuth client is not authorized for the desktop flow.',
+      access_denied: 'OAuth access was denied.',
+      unsupported_grant_type: 'The OAuth provider does not support this grant type.',
+      temporarily_unavailable: 'The OAuth provider is temporarily unavailable.',
+      server_error: 'The OAuth provider could not complete the token request.',
+    };
+    const providerCode =
+      typeof json.error === 'string' && Object.hasOwn(messages, json.error)
+        ? json.error
+        : undefined;
     throw new ConnectorError({
       provider,
       operation,
       code: response.status === 401 ? 'UNAUTHORIZED' : 'INVALID_REQUEST',
-      message: json.error_description ?? json.error ?? 'OAuth token request failed',
+      message: providerCode ? messages[providerCode]! : 'OAuth token request failed',
       httpStatus: response.status,
-      providerCode: json.error,
-      details: json,
+      providerCode,
     });
   }
   const expiresIn = json.expires_in;
@@ -288,6 +306,7 @@ export async function exchangeAuthorizationCode(
     redirect_uri: input.redirectUri,
     grant_type: 'authorization_code',
   });
+  addDesktopClientSecret(body, input.provider, input.clientSecret);
   return postToken(
     input.provider,
     input.fetch,
@@ -304,6 +323,7 @@ export async function refreshAccessToken(input: RefreshAccessTokenInput): Promis
     refresh_token: input.refreshToken,
     grant_type: 'refresh_token',
   });
+  addDesktopClientSecret(body, input.provider, input.clientSecret);
   if (input.scopes?.length) body.set('scope', input.scopes.join(' '));
   return postToken(
     input.provider,
@@ -313,4 +333,15 @@ export async function refreshAccessToken(input: RefreshAccessTokenInput): Promis
     'oauth.refresh',
     input.now ?? (() => new Date()),
   );
+}
+
+function addDesktopClientSecret(
+  body: URLSearchParams,
+  provider: ConnectorProvider,
+  secret?: string,
+): void {
+  if (!secret?.trim()) return;
+  if (provider !== 'google')
+    throw new TypeError('Microsoft desktop clients do not use a client secret');
+  body.set('client_secret', secret.trim());
 }

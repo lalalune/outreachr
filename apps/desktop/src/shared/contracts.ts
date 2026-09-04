@@ -476,6 +476,7 @@ export interface CommandMap {
   'connector.configure': {
     provider: ConnectorProvider;
     clientId: string;
+    clientSecret?: string;
     tenantId?: string;
     relationshipSync: boolean;
   };

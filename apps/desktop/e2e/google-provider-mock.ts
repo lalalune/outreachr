@@ -105,7 +105,7 @@ function mockHandlers(baseUrl: string, state: GoogleProviderMockState): RequestH
         params.get('grant_type') !== 'authorization_code' ||
         params.get('code') !== 'outreachr-e2e-google-code' ||
         !/^[A-Za-z0-9_-]{43,128}$/u.test(params.get('code_verifier') ?? '') ||
-        params.has('client_secret')
+        params.get('client_secret') !== 'e2e-google-desktop-secret'
       ) {
         return HttpResponse.json({ error: 'invalid test PKCE exchange' }, { status: 400 });
       }
