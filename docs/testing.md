@@ -19,6 +19,8 @@ Desktop tests cover command validation, seed bootstrapping, legacy-to-v9 migrati
 
 Local contact tests cover canonical email ownership, rollback, suppression, historical outbound reconciliation, and private contribution exclusion. CSV import tests cover bounded UTF-8/RFC 4180 parsing, preview without writes, changed-file detection, duplicate and conflicting rows, complementary investor details, all-or-nothing database writes, and repeated imports. Built Electron workflows exercise Add person through drafting and CSV preview, cancellation, import, and drafting. Google Desktop OAuth tests require the client secret at exchange and refresh, verify encrypted storage and rotation, and ensure it never appears in browser authorization or public bootstrap data.
 
+Workspace-lock tests use separate processes and symlink aliases, verify normal release and recovery after a crashed owner, and launch the built standalone MCP entrypoint while Electron owns the vault to prove refusal leaves its bytes unchanged. Codex tests cover inherited configuration collisions, malformed configuration, substituted or unrelated MCP tools, missing bridges, and bounded inventory pagination. The live smoke additionally checks the actual bundled runtime's inventory before its model turn. Keyboard navigation coverage includes choosing a search shortcut for the current page and closing the dialog.
+
 ## Live Codex subscription smoke
 
 The normal suite never consumes an account-backed model. To validate the complete embedded Codex path with the official CLI's existing ChatGPT sign-in, explicitly opt in on a developer machine:
