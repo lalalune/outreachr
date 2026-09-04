@@ -30,15 +30,15 @@
     "node": ">=20"
   },
   "dependencies": {
-    "sql.js": "1.14.1",
+    "sql.js": "1.14.2",
     "zod": "4.4.3"
   },
   "devDependencies": {
-    "@types/node": "24.13.3",
+    "@types/node": "26.2.0",
     "@types/sql.js": "1.4.11",
-    "@vitest/coverage-v8": "4.1.10",
+    "@vitest/coverage-v8": "4.1.11",
     "typescript": "5.9.3",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   },
   "license": "Apache-2.0"
 }
