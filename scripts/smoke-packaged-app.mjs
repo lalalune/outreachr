@@ -135,7 +135,9 @@ async function stageDistributions(root, requestedKind) {
             ['attach', '-nobrowse', '-readonly', '-mountpoint', mountpoint, dmgs[0]],
             {
               capture: false,
-              timeoutMs: 60_000,
+              // hdiutil verifies the full image before mounting. Native Intel
+              // runners can need several minutes for the bundled agent sidecars.
+              timeoutMs: 300_000,
             },
           );
           mounted = true;
