@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { isAbsolute, resolve } from 'node:path';
 
 import { AgentRuntimeError, asAgentError } from './errors.js';
@@ -98,9 +99,13 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
         args: [
           'app-server',
           '--config',
-          'mcp_servers={}',
+          'features.plugins=false',
           '--config',
-          'apps={}',
+          'features.apps=false',
+          '--config',
+          'features.hooks=false',
+          '--config',
+          'features.remote_plugin=false',
           '--config',
           'web_search="disabled"',
           '--listen',
@@ -240,6 +245,8 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
       if (!status.authenticated)
         throw new AgentRuntimeError('AUTH_REQUIRED', 'Sign in to Codex before running the agent.');
       await this.#ensureInitialized();
+      const { config, serverName } = await this.#runConfiguration(mcp);
+      if (active.cancelled) throw new AgentRuntimeError('CANCELLED', 'Codex run was cancelled.');
       let deltas = '';
       let finalText = '';
       const completion = new Promise<string>((resolveCompletion, rejectCompletion) => {
@@ -249,7 +256,7 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
           if (notification.method === 'item/started') {
             const itemType = extractItemType(notification.params);
             const allowedMcpCall =
-              itemType === 'mcpToolCall' && isAllowedMcpItem(notification.params, mcp);
+              itemType === 'mcpToolCall' && isAllowedMcpItem(notification.params, mcp, serverName);
             if (itemType && !SAFE_ITEM_TYPES.has(itemType) && !allowedMcpCall) {
               void this.#interrupt(active);
               rejectCompletion(
@@ -303,25 +310,7 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
         environments: [],
         dynamicTools: [],
         selectedCapabilityRoots: [],
-        config: {
-          web_search: 'disabled',
-          apps: {},
-          mcp_servers: mcp
-            ? {
-                outreachr: {
-                  url: mcp.url,
-                  bearer_token_env_var: OUTREACHR_MCP_TOKEN_ENV,
-                  http_headers: { [OUTREACHR_MCP_SESSION_HEADER]: mcp.sessionId },
-                  enabled_tools: [...mcp.enabledTools],
-                  disabled_tools: [],
-                  required: true,
-                  default_tools_approval_mode: 'auto',
-                  startup_timeout_sec: 5,
-                  tool_timeout_sec: 30,
-                },
-              }
-            : {},
-        },
+        config,
         ...((request.model ?? this.#defaultModel)
           ? { model: request.model ?? this.#defaultModel }
           : {}),
@@ -330,6 +319,7 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
       if (!threadId)
         throw new AgentRuntimeError('PROTOCOL_ERROR', 'Codex did not return a thread id.');
       active.threadId = threadId;
+      await this.#assertMcpInventory(threadId, mcp, serverName);
       if (active.cancelled) throw new AgentRuntimeError('CANCELLED', 'Codex run was cancelled.');
 
       const turn = await this.#rpc.request<TurnStartResult>('turn/start', {
@@ -423,6 +413,150 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
         detail: asAgentError(error).message,
       };
     }
+  }
+
+  async #assertMcpInventory(
+    threadId: string,
+    mcp: AgentMcpConnection | undefined,
+    serverName: string,
+  ): Promise<void> {
+    let cursor: string | undefined;
+    const seen = new Set<string>();
+    let bridgeVerified = !mcp;
+    for (let page = 0; page < 10; page += 1) {
+      const response = await this.#rpc.request<unknown>('mcpServerStatus/list', {
+        threadId,
+        detail: 'toolsAndAuthOnly',
+        limit: 100,
+        ...(cursor ? { cursor } : {}),
+      });
+      if (!isRecord(response) || !Array.isArray(response.data))
+        throw new AgentRuntimeError(
+          'POLICY_DENIED',
+          'Codex MCP tool inventory could not be verified.',
+        );
+      for (const server of response.data) {
+        if (!isRecord(server) || !isRecord(server.tools))
+          throw new AgentRuntimeError('POLICY_DENIED', 'Codex MCP tool inventory is invalid.');
+        const names = Object.values(server.tools).map((tool) =>
+          isRecord(tool) ? tool.name : undefined,
+        );
+        if (server.name !== serverName && names.length)
+          throw new AgentRuntimeError(
+            'POLICY_DENIED',
+            `Codex exposed tools from an inherited MCP server: ${String(server.name).slice(0, 80)}.`,
+          );
+        if (server.name === serverName) {
+          if (
+            !mcp ||
+            names.length !== mcp.enabledTools.length ||
+            mcp.enabledTools.some((name) => !names.includes(name))
+          )
+            throw new AgentRuntimeError(
+              'POLICY_DENIED',
+              'Codex MCP tools do not match the approved allowlist.',
+            );
+          bridgeVerified = true;
+        }
+      }
+      if (response.nextCursor === null || response.nextCursor === undefined) {
+        if (!bridgeVerified)
+          throw new AgentRuntimeError(
+            'POLICY_DENIED',
+            'Codex did not initialize the approved MCP bridge.',
+          );
+        return;
+      }
+      if (
+        typeof response.nextCursor !== 'string' ||
+        !response.nextCursor ||
+        seen.has(response.nextCursor)
+      )
+        throw new AgentRuntimeError(
+          'POLICY_DENIED',
+          'Codex MCP tool inventory pagination is invalid.',
+        );
+      seen.add(response.nextCursor);
+      cursor = response.nextCursor;
+    }
+    throw new AgentRuntimeError(
+      'POLICY_DENIED',
+      'Codex MCP tool inventory exceeded its page limit.',
+    );
+  }
+
+  async #runConfiguration(mcp: AgentMcpConnection | undefined): Promise<{
+    config: Record<string, unknown>;
+    serverName: string;
+  }> {
+    const response = await this.#rpc.request<unknown>('config/read', {
+      includeLayers: false,
+      cwd: this.#workspaceDirectory,
+    });
+    if (!isRecord(response) || !isRecord(response.config)) {
+      throw new AgentRuntimeError(
+        'POLICY_DENIED',
+        'Codex effective configuration could not be inspected.',
+      );
+    }
+    const effective = response.config;
+    const disable = (key: string): Record<string, { enabled: false }> => {
+      const table = effective[key];
+      if (table === undefined || table === null) return {};
+      if (!isRecord(table))
+        throw new AgentRuntimeError('POLICY_DENIED', `Codex ${key} configuration is invalid.`);
+      return Object.fromEntries(
+        Object.keys(table).map((name) => [name, { enabled: false as const }]),
+      );
+    };
+    // Empty TOML tables merge with inherited settings. Disable every inherited
+    // entry explicitly; never copy its commands, headers, or credentials.
+    const servers = Object.fromEntries(
+      Object.keys(disable('mcp_servers')).map((name) => [
+        name,
+        { enabled: false, required: false },
+      ]),
+    );
+    let serverName: string;
+    do {
+      serverName = `outreachr_${randomBytes(8).toString('hex')}`;
+    } while (Object.hasOwn(servers, serverName));
+    return {
+      serverName,
+      config: {
+        web_search: 'disabled',
+        features: {
+          apps: false,
+          plugins: false,
+          hooks: false,
+          remote_plugin: false,
+          multi_agent: false,
+          shell_tool: false,
+          unified_exec: false,
+        },
+        apps: disable('apps'),
+        plugins: disable('plugins'),
+        mcp_servers: {
+          ...servers,
+          ...(mcp
+            ? {
+                [serverName]: {
+                  url: mcp.url,
+                  bearer_token_env_var: OUTREACHR_MCP_TOKEN_ENV,
+                  http_headers: { [OUTREACHR_MCP_SESSION_HEADER]: mcp.sessionId },
+                  enabled_tools: [...mcp.enabledTools],
+                  disabled_tools: [],
+                  enabled: true,
+                  required: true,
+                  default_tools_approval_mode: 'auto',
+                  startup_timeout_sec: 5,
+                  tool_timeout_sec: 30,
+                },
+              }
+            : {}),
+        },
+      },
+    };
   }
 
   async #readAccount(refreshToken: boolean): Promise<CodexAccountResult> {
@@ -541,11 +675,15 @@ function validateMcpConnection(connection: AgentMcpConnection, runId: string): A
   return connection;
 }
 
-function isAllowedMcpItem(params: unknown, connection: AgentMcpConnection | undefined): boolean {
+function isAllowedMcpItem(
+  params: unknown,
+  connection: AgentMcpConnection | undefined,
+  serverName: string,
+): boolean {
   if (!connection || !isRecord(params) || !isRecord(params.item)) return false;
   return (
     params.item.type === 'mcpToolCall' &&
-    params.item.server === connection.serverName &&
+    params.item.server === serverName &&
     typeof params.item.tool === 'string' &&
     connection.enabledTools.includes(params.item.tool as AgentMcpConnection['enabledTools'][number])
   );
