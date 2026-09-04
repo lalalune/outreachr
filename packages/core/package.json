@@ -37,7 +37,7 @@
     "@types/node": "26.2.0",
     "@types/sql.js": "1.4.11",
     "@vitest/coverage-v8": "4.1.11",
-    "typescript": "7.0.2",
+    "typescript": "5.9.3",
     "vitest": "4.1.11"
   },
   "license": "Apache-2.0"
