@@ -40,7 +40,11 @@ export default {
         'origin',
         'x-outreachr-request',
         'x-file-name',
-        'stripe-signature',
+        'x-eliza-event',
+        'x-eliza-delivery',
+        'x-eliza-key-id',
+        'x-eliza-timestamp',
+        'x-eliza-signature',
       ]) {
         const value = request.headers.get(name);
         if (value) headers.set(name, value);

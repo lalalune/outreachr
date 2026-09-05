@@ -1,0 +1,11 @@
+{
+  "artifact": "elizaos-cloud-sdk-61bd46408cdec.tgz",
+  "sha256": "aadced56e98d108969c183fa7f808e2afe434d8151a623ca8edce7be75f4708b",
+  "sourceCommit": "61bd46408cdec1c338f6b5cabe8f071258c1a5de",
+  "sdkSourceTree": "4935708d76fd3d876787c858194543c82d81515a",
+  "package": "@elizaos/cloud-sdk",
+  "version": "2.0.3-beta.7",
+  "license": "MIT",
+  "licenseNoticeMatchesRepository": true,
+  "status": "Local release candidate; not an npm publication or proof of deployed API availability."
+}

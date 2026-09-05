@@ -8,6 +8,7 @@ import { CredentialCipher, SessionStore } from './sessions';
 import { CloudRuntime } from './runtime';
 import { AgentRuns, CloudAgent } from './agent';
 import { InferenceClient } from './inference';
+import { CloudMembershipSync } from './billing-memberships';
 
 const env = z
   .object({
@@ -19,14 +20,31 @@ const env = z
     ELIZA_API_ORIGIN: z.string().url().default('https://api.eliza.app'),
     ELIZA_LOGIN_ORIGIN: z.string().url().default('https://cloud.eliza.app'),
     ELIZA_APP_ID: z.string().uuid(),
+    ELIZA_PRODUCT_FAMILY_KEY: z.string().min(1),
+    ELIZA_DELEGATION_CLIENT_ID: z.string().uuid(),
+    ELIZA_BILLING_ENVIRONMENT: z.enum(['test', 'live']),
     ELIZA_CLIENT_SECRET: z.string().min(32),
     ELIZA_INFERENCE_API_KEY: z.string().min(20),
+    ELIZA_BILLING_NOTIFICATION_KEYS: z
+      .string()
+      .default('{}')
+      .transform((value, context) => {
+        try {
+          return JSON.parse(value) as unknown;
+        } catch {
+          context.addIssue({ code: 'custom', message: 'Notification keys must be valid JSON.' });
+          return z.NEVER;
+        }
+      })
+      .pipe(z.record(z.uuid(), z.string().min(32))),
     SESSION_ENCRYPTION_KEY: z.string(),
     EDGE_SECRET: z.string().min(32),
     RAILWAY_GIT_COMMIT_SHA: z.string().optional(),
     REVISION: z.string().default('development'),
   })
   .parse(process.env);
+if (env.NODE_ENV === 'production' && Object.keys(env.ELIZA_BILLING_NOTIFICATION_KEYS).length === 0)
+  throw new Error('Production app billing requires a configured notification verification key.');
 if (
   env.NODE_ENV === 'production' &&
   [env.PUBLIC_ORIGIN, env.ELIZA_API_ORIGIN, env.ELIZA_LOGIN_ORIGIN].some(
@@ -46,9 +64,24 @@ const pool = new Pool({
 });
 pool.on('error', () => process.stderr.write('PostgreSQL connection failed.\n'));
 await pool.query('SELECT id FROM outreachr.users LIMIT 0');
-const eliza = new ElizaClient(env.ELIZA_API_ORIGIN, env.ELIZA_CLIENT_SECRET);
+const eliza = new ElizaClient({
+  apiOrigin: env.ELIZA_API_ORIGIN,
+  loginOrigin: env.ELIZA_LOGIN_ORIGIN,
+  publicOrigin: env.PUBLIC_ORIGIN,
+  appId: env.ELIZA_APP_ID,
+  clientId: env.ELIZA_DELEGATION_CLIENT_ID,
+  clientSecret: env.ELIZA_CLIENT_SECRET,
+  billingEnvironment: env.ELIZA_BILLING_ENVIRONMENT,
+});
 const sessions = new SessionStore(pool, new CredentialCipher(env.SESSION_ENCRYPTION_KEY));
-const inference = new InferenceClient(env.ELIZA_API_ORIGIN, env.ELIZA_INFERENCE_API_KEY);
+const inference = new InferenceClient({
+  apiOrigin: env.ELIZA_API_ORIGIN,
+  appId: env.ELIZA_APP_ID,
+  clientId: env.ELIZA_DELEGATION_CLIENT_ID,
+  clientSecret: env.ELIZA_CLIENT_SECRET,
+  developerApiKey: env.ELIZA_INFERENCE_API_KEY,
+  billingEnvironment: env.ELIZA_BILLING_ENVIRONMENT,
+});
 const runs = new AgentRuns();
 const revision = env.RAILWAY_GIT_COMMIT_SHA ?? env.REVISION;
 const runtime = new CloudRuntime({
@@ -63,6 +96,8 @@ const app = createApp({
     elizaOrigin: env.ELIZA_API_ORIGIN,
     elizaLoginOrigin: env.ELIZA_LOGIN_ORIGIN,
     elizaAppId: env.ELIZA_APP_ID,
+    productFamilyKey: env.ELIZA_PRODUCT_FAMILY_KEY,
+    billingNotificationKeys: env.ELIZA_BILLING_NOTIFICATION_KEYS,
     edgeSecret: env.EDGE_SECRET,
     production: env.NODE_ENV === 'production',
     revision,
@@ -74,9 +109,28 @@ const app = createApp({
   agentRuns: runs,
 });
 const server = serve({ fetch: app.fetch, port: env.PORT, hostname: '0.0.0.0' });
+const membershipSync = new CloudMembershipSync(pool, eliza, env.ELIZA_PRODUCT_FAMILY_KEY);
+let syncingMemberships = false;
+const drainMemberships = async () => {
+  if (syncingMemberships) return;
+  syncingMemberships = true;
+  try {
+    await membershipSync.runPending();
+  } catch {
+    process.stderr.write('Pending Cloud membership synchronization could not complete.\n');
+  } finally {
+    syncingMemberships = false;
+  }
+};
+const membershipTimer = setInterval(() => {
+  void drainMemberships();
+}, 15_000);
+membershipTimer.unref();
+void drainMemberships();
 process.stdout.write(`Outreachr cloud listening on port ${env.PORT}, revision ${revision}.\n`);
 for (const signal of ['SIGINT', 'SIGTERM'] as const)
   process.once(signal, () => {
+    clearInterval(membershipTimer);
     server.close(() => {
       void pool.end().then(() => process.exit(0));
     });

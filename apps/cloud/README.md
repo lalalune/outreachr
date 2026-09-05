@@ -24,21 +24,26 @@ specified. They do not demonstrate a live provider login, charge, or email.
 
 ## Deployment
 
-1. Merge and deploy the companion Eliza Cloud integration through that repo's
-   migration, staging certification, and production approval workflow. Apply its
-   delegation migration before enabling the routes.
-2. Register Outreachr with its exact HTTPS origin. Configure the Eliza Worker
-   bindings `OUTREACHR_APP_ID`, `OUTREACHR_ORIGIN`, and
-   `OUTREACHR_CLIENT_SECRET_SHA256`. Keep the unhashed client secret only in the
-   BFF environment.
-3. Provision app-tagged USD monthly Stripe prices: 4900 cents for Sol and 20000
-   cents for Astra. Set `OUTREACHR_STRIPE_SOL_PRICE`,
-   `OUTREACHR_STRIPE_ASTRA_PRICE`, and `OUTREACHR_STRIPE_WEBHOOK_SECRET` in Eliza.
-   Stripe events target `https://outreachr.eliza.app/api/billing/webhook`.
-   Existing Cloud subscriptions and their customers are not reused as Outreachr
-   workspaces; both products use the same merchant account and payment service.
+The app is being migrated from the original product-specific bridge to generic
+Cloud app APIs. Do not deploy the old bridge configuration. The intended
+contract and remaining acceptance checks are in
+[App subscriptions on Eliza Cloud](../../docs/app-billing-and-shipping-plan.md).
+
+1. Merge and deploy the generic Cloud app subscription and delegation APIs
+   through that repository's migration, staging certification, and production
+   approval workflow. Adopt the finalized consumer contract before cutover.
+2. Register Outreachr with its exact HTTPS origin and requested Google
+   capabilities. Use app-scoped credentials issued by Cloud. Provider tokens
+   remain in Cloud; the BFF stores only encrypted delegated grants.
+3. Declare the Sol and Astra plans through Cloud's generic app billing setup:
+   $49 and $200 per editing seat/month, with the agreed seven-day no-card trial.
+   Cloud owns Stripe provisioning, intake, and payment verification. Outreachr
+   consumes Cloud's signed notifications and authoritative entitlement snapshots.
+   Keep app subscriptions separate from personal Eliza plans and developer usage.
 4. Apply `src/migrate.ts` with an administrative `MIGRATION_DATABASE_URL` and
-   explicit `MIGRATION_EXPECT_DATABASE`. It creates only the `outreachr` schema.
+   explicit `MIGRATION_EXPECT_DATABASE`. Set `MIGRATION_RUNTIME_ROLE` to the existing
+   restricted application login role to apply current and future table/sequence
+   permissions within `outreachr`. It creates only the `outreachr` schema.
    Give the runtime role usage on that schema, DML on its tables, and sequence
    usage. Verify that it cannot read or write existing Cloud tables. Never give
    the BFF the administrative database credential.
@@ -59,7 +64,7 @@ specified. They do not demonstrate a live provider login, charge, or email.
 
 The seven-day no-card trial is claimed once per verified Cloud account. Editing
 seats are billed per workspace plan; viewers are free. Invitations never buy
-seats. Paid access comes only from current Stripe subscription state, never a
+seats. Paid access comes only from verified Cloud app subscription state, never a
 checkout return URL. If a stale billing portal reduces seats below current
 editors, editing pauses until capacity or membership is corrected. AI allowance
 uses provider-reported token counts at uncached catalog prices plus the Cloud

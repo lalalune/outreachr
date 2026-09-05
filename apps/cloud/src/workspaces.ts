@@ -2,6 +2,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import { lockOrganization, transaction } from './database';
+import { enqueueMembershipChange } from './billing-memberships';
 import { requireCondition } from './errors';
 import {
   INVITE_DAYS,
@@ -28,16 +29,37 @@ export interface Identity {
 export interface Organization extends QueryResultRow {
   id: string;
   name: string;
+  created_by?: string;
+  cloud_provisioning_state?:
+    'pending' | 'ready' | 'ineligible' | 'failed' | 'migration_required' | null;
+  cloud_trial_requested?: boolean;
+  cloud_provisioning_error?: string | null;
   plan: Plan;
   role: Role;
   seat_capacity: number;
   editing_members?: number;
+  trial_started_at?: Date | null;
   trial_ends_at: Date | null;
   subscription_id: string | null;
   subscription_status: string;
   subscription_period_start: Date | null;
   subscription_period_end: Date | null;
   stripe_customer_id: string | null;
+  cloud_app_id: string | null;
+  cloud_billing_account_id: string | null;
+  cloud_billing_environment: 'test' | 'live' | null;
+  cloud_product_family_key: string | null;
+  cloud_billing_access?: 'granted' | 'read_only' | 'denied' | null;
+  cloud_billing_valid_until?: Date | null;
+  cloud_billing_observed_at?: Date | null;
+  cloud_billing_invalidated?: boolean;
+  cloud_ownership_confirmed?: boolean;
+  cloud_ownership_pending?: boolean;
+  cloud_ownership_observed_at?: Date | null;
+  cloud_administrator_revision?: string | null;
+  cloud_administrators?: string[];
+  cloud_membership_ready?: boolean;
+  cloud_sync_job_id?: string | null;
   cancel_at_period_end: boolean;
 }
 interface UserRow extends QueryResultRow {
@@ -59,28 +81,41 @@ interface InviteRow extends QueryResultRow {
 }
 
 export function entitlement(org: Organization, now: Date) {
+  const cloudBound = org.cloud_billing_account_id !== null;
+  const cloudRequired = cloudBound || Boolean(org.cloud_provisioning_state);
+  const cloudConfirmed =
+    !cloudRequired ||
+    (cloudBound &&
+      !org.cloud_billing_invalidated &&
+      org.cloud_billing_access === 'granted' &&
+      org.cloud_billing_valid_until &&
+      org.cloud_billing_valid_until.getTime() > now.getTime() &&
+      org.cloud_billing_observed_at &&
+      org.cloud_billing_observed_at.getTime() <= now.getTime() + 60_000 &&
+      org.cloud_billing_observed_at.getTime() > now.getTime() - 300_000);
   const paid =
+    Boolean(cloudConfirmed) &&
     org.subscription_status === 'active' &&
     org.subscription_period_start !== null &&
     org.subscription_period_start.getTime() <= now.getTime() &&
     org.subscription_period_end !== null &&
     org.subscription_period_end.getTime() > now.getTime();
   const trial =
-    org.subscription_id === null &&
+    Boolean(cloudConfirmed) &&
+    (cloudRequired ? org.subscription_status === 'trialing' : org.subscription_id === null) &&
     org.trial_ends_at !== null &&
     org.trial_ends_at.getTime() > now.getTime();
   return {
     active: paid || trial,
     trial,
     canEdit:
-      isEditor(org.role) && (paid || trial) && org.seat_capacity >= (org.editing_members ?? 1),
+      isEditor(org.role) &&
+      org.cloud_membership_ready !== false &&
+      (paid || trial) &&
+      org.seat_capacity >= (org.editing_members ?? 1),
     plan: org.plan,
     model: PLANS[org.plan].model,
-    allowanceCents: paid
-      ? PLANS[org.plan].aiAllowanceCents * org.seat_capacity
-      : trial
-        ? TRIAL_AI_CENTS
-        : 0,
+    allowanceCents: paid ? PLANS[org.plan].aiAllowanceCents : trial ? TRIAL_AI_CENTS : 0,
     periodKey: paid
       ? `paid:${org.subscription_id}:${org.subscription_period_start?.toISOString()}`
       : `trial:${org.trial_ends_at?.toISOString()}`,
@@ -93,7 +128,7 @@ export async function memberOrganization(
   orgId: string,
 ): Promise<Organization> {
   const result = await client.query<Organization>(
-    `SELECT o.*, m.role,(SELECT count(*)::int FROM outreachr.memberships active WHERE active.org_id=o.id AND active.role!='viewer') AS editing_members FROM outreachr.organizations o
+    `SELECT o.*, m.role,m.cloud_membership_ready,m.cloud_sync_job_id,(SELECT count(*)::int FROM outreachr.memberships active WHERE active.org_id=o.id AND active.role!='viewer') AS editing_members FROM outreachr.organizations o
       JOIN outreachr.memberships m ON m.org_id=o.id WHERE o.id=$1 AND m.user_id=$2`,
     [orgId, userId],
   );
@@ -132,6 +167,7 @@ export class WorkspaceStore {
   constructor(
     readonly pool: Pool,
     readonly now: () => Date = () => new Date(),
+    readonly billingMode: 'local' | 'cloud' = 'local',
   ) {}
 
   async signIn(identity: Identity): Promise<{ user: UserRow; organizations: Organization[] }> {
@@ -155,12 +191,20 @@ export class WorkspaceStore {
       if (!user.default_org_id) {
         const orgId = randomUUID();
         const now = this.now();
-        const trialEnd = user.trial_claimed_at
-          ? null
-          : new Date(now.getTime() + TRIAL_DAYS * dayMs);
+        const trialEnd =
+          this.billingMode === 'cloud' || user.trial_claimed_at
+            ? null
+            : new Date(now.getTime() + TRIAL_DAYS * dayMs);
         await client.query(
-          'INSERT INTO outreachr.organizations(id,name,created_by,trial_ends_at) VALUES($1,$2,$3,$4)',
-          [orgId, `${identity.name || 'My'} workspace`.slice(0, 100), identity.id, trialEnd],
+          'INSERT INTO outreachr.organizations(id,name,created_by,trial_ends_at,cloud_provisioning_state,cloud_trial_requested) VALUES($1,$2,$3,$4,$5,$6)',
+          [
+            orgId,
+            `${identity.name || 'My'} workspace`.slice(0, 100),
+            identity.id,
+            trialEnd,
+            this.billingMode === 'cloud' ? 'pending' : null,
+            this.billingMode === 'cloud',
+          ],
         );
         await client.query(
           "INSERT INTO outreachr.memberships(org_id,user_id,role) VALUES($1,$2,'owner')",
@@ -168,12 +212,19 @@ export class WorkspaceStore {
         );
         await client.query(
           'UPDATE outreachr.users SET default_org_id=$2,trial_claimed_at=COALESCE(trial_claimed_at,$3) WHERE id=$1',
-          [identity.id, orgId, now],
+          [identity.id, orgId, this.billingMode === 'local' ? now : null],
         );
         user.default_org_id = orgId;
-        user.trial_claimed_at ??= now;
+        if (this.billingMode === 'local') user.trial_claimed_at ??= now;
         await audit(client, orgId, identity.id, 'workspace.created', { default: true });
       }
+      if (this.billingMode === 'cloud')
+        await client.query(
+          `UPDATE outreachr.organizations o SET cloud_provisioning_state='migration_required'
+          FROM outreachr.memberships m WHERE m.org_id=o.id AND m.user_id=$1
+          AND o.cloud_billing_account_id IS NULL AND o.cloud_provisioning_state IS NULL`,
+          [identity.id],
+        );
       return user;
     });
     return { user, organizations: await this.list(identity.id) };
@@ -182,7 +233,7 @@ export class WorkspaceStore {
   async list(userId: string): Promise<Organization[]> {
     return (
       await this.pool.query<Organization>(
-        `SELECT o.*,m.role,(SELECT count(*)::int FROM outreachr.memberships active WHERE active.org_id=o.id AND active.role!='viewer') AS editing_members FROM outreachr.organizations o JOIN outreachr.memberships m ON o.id=m.org_id
+        `SELECT o.*,m.role,m.cloud_membership_ready,m.cloud_sync_job_id,(SELECT count(*)::int FROM outreachr.memberships active WHERE active.org_id=o.id AND active.role!='viewer') AS editing_members FROM outreachr.organizations o JOIN outreachr.memberships m ON o.id=m.org_id
       WHERE m.user_id=$1 ORDER BY o.created_at,o.id`,
         [userId],
       )
@@ -193,8 +244,8 @@ export class WorkspaceStore {
     return transaction(this.pool, async (client) => {
       const orgId = randomUUID();
       await client.query(
-        'INSERT INTO outreachr.organizations(id,name,created_by) VALUES($1,$2,$3)',
-        [orgId, name.trim(), userId],
+        'INSERT INTO outreachr.organizations(id,name,created_by,cloud_provisioning_state) VALUES($1,$2,$3,$4)',
+        [orgId, name.trim(), userId, this.billingMode === 'cloud' ? 'pending' : null],
       );
       await client.query(
         "INSERT INTO outreachr.memberships(org_id,user_id,role) VALUES($1,$2,'owner')",
@@ -210,7 +261,13 @@ export class WorkspaceStore {
       await lockOrganization(client, orgId);
       const org = await memberOrganization(client, userId, orgId);
       requireCondition(
-        isAdmin(org.role),
+        !org.cloud_ownership_pending,
+        409,
+        'ownership_change_pending',
+        'Finish the pending ownership change before changing members or invitations.',
+      );
+      requireCondition(
+        isAdmin(org.role) && org.cloud_membership_ready !== false,
         403,
         'admin_required',
         'Only workspace owners and admins can invite members.',
@@ -273,14 +330,6 @@ export class WorkspaceStore {
         [hint.id],
       );
       const invite = locked.rows[0]!;
-      requireCondition(
-        !invite.revoked_at &&
-          !invite.consumed_by &&
-          invite.expires_at.getTime() > this.now().getTime(),
-        409,
-        'invite_expired',
-        'Invitation has expired, was revoked, or was already accepted.',
-      );
       const user = (
         await client.query<UserRow>('SELECT * FROM outreachr.users WHERE id=$1 FOR UPDATE', [
           userId,
@@ -291,6 +340,22 @@ export class WorkspaceStore {
         403,
         'invite_email_mismatch',
         'Sign in using the verified email this invitation was addressed to.',
+      );
+      if (invite.consumed_by) {
+        requireCondition(
+          invite.consumed_by === userId,
+          409,
+          'invite_consumed',
+          'This invitation was already accepted by another account.',
+        );
+        // Recover a lost acceptance response; removed membership cannot be recreated.
+        return memberOrganization(client, userId, invite.org_id);
+      }
+      requireCondition(
+        !invite.revoked_at && invite.expires_at.getTime() > this.now().getTime(),
+        409,
+        'invite_expired',
+        'Invitation has expired or was revoked.',
       );
       const existing = await client.query(
         'SELECT 1 FROM outreachr.memberships WHERE org_id=$1 AND user_id=$2',
@@ -310,7 +375,7 @@ export class WorkspaceStore {
       ).rows[0]!;
       if (isEditor(invite.role)) {
         requireCondition(
-          entitlement(org, this.now()).active,
+          Boolean(org.cloud_billing_account_id) || entitlement(org, this.now()).active,
           403,
           'subscription_required',
           'This workspace needs an active subscription.',
@@ -321,6 +386,7 @@ export class WorkspaceStore {
         'INSERT INTO outreachr.memberships(org_id,user_id,role) VALUES($1,$2,$3)',
         [invite.org_id, userId, invite.role],
       );
+      await enqueueMembershipChange(client, org, userId, invite.role);
       await client.query('UPDATE outreachr.invites SET consumed_by=$2 WHERE id=$1', [
         invite.id,
         userId,
@@ -338,7 +404,13 @@ export class WorkspaceStore {
       await lockOrganization(client, orgId);
       const org = await memberOrganization(client, userId, orgId);
       requireCondition(
-        isAdmin(org.role),
+        !org.cloud_ownership_pending,
+        409,
+        'ownership_change_pending',
+        'Finish the pending ownership change before changing members or invitations.',
+      );
+      requireCondition(
+        isAdmin(org.role) && org.cloud_membership_ready !== false,
         403,
         'admin_required',
         'Only workspace owners and admins can revoke invitations.',
@@ -362,7 +434,14 @@ export class WorkspaceStore {
       await lockOrganization(client, orgId);
       const org = await memberOrganization(client, userId, orgId);
       requireCondition(
-        isAdmin(org.role) || (userId === targetId && role === null),
+        !org.cloud_ownership_pending,
+        409,
+        'ownership_change_pending',
+        'Finish the pending ownership change before changing members or invitations.',
+      );
+      requireCondition(
+        (isAdmin(org.role) && org.cloud_membership_ready !== false) ||
+          (userId === targetId && role === null),
         403,
         'admin_required',
         'Only owners and admins can change memberships.',
@@ -393,9 +472,17 @@ export class WorkspaceStore {
           'Assign another owner before removing the last owner.',
         );
       }
+      requireCondition(
+        !org.cloud_billing_account_id ||
+          target.role === role ||
+          (target.role !== 'owner' && role !== 'owner'),
+        503,
+        'billing_owner_transfer_unavailable',
+        'Cloud billing owner transfer must be available before changing workspace ownership.',
+      );
       if (role && isEditor(role) && !isEditor(target.role)) {
         requireCondition(
-          entitlement(org, this.now()).active,
+          Boolean(org.cloud_billing_account_id) || entitlement(org, this.now()).active,
           403,
           'subscription_required',
           'This workspace needs an active subscription.',
@@ -417,6 +504,7 @@ export class WorkspaceStore {
           [targetId, orgId],
         );
       }
+      await enqueueMembershipChange(client, org, targetId, role);
       await audit(client, orgId, userId, 'membership.changed', { targetId, role });
     });
   }
@@ -425,7 +513,7 @@ export class WorkspaceStore {
     await memberOrganization(this.pool, userId, orgId);
     return (
       await this.pool.query<{ id: string; name: string; email: string; role: Role }>(
-        'SELECT u.id,u.name,u.email,m.role FROM outreachr.memberships m JOIN outreachr.users u ON m.user_id=u.id WHERE m.org_id=$1 ORDER BY m.joined_at',
+        'SELECT u.id,u.name,u.email,m.role,NOT m.cloud_membership_ready AS "syncPending" FROM outreachr.memberships m JOIN outreachr.users u ON m.user_id=u.id WHERE m.org_id=$1 ORDER BY m.joined_at',
         [orgId],
       )
     ).rows;

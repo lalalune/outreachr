@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageCount": 670,
+  "packageCount": 669,
   "packages": [
     {
       "name": "@adobe/css-tools",
@@ -4701,14 +4701,6 @@
       "homepage": null,
       "repository": "sindresorhus/strip-indent",
       "licenseTextSha256": ["c9808a775260db5602f6a0c29f5f8b78e81f9666a33623fedfa34a22208b1063"]
-    },
-    {
-      "name": "stripe",
-      "version": "22.6.1",
-      "license": "MIT",
-      "homepage": "https://github.com/stripe/stripe-node",
-      "repository": "https://github.com/stripe/stripe-node",
-      "licenseTextSha256": ["b36d54d51ac6f20b867c24264b9433f54372c3370d4984cf1c9884c5c6de1f7a"]
     },
     {
       "name": "sumchecker",

@@ -1,3 +1,5 @@
+import { AppInferenceClient } from '@elizaos/cloud-sdk';
+import type { Organization } from './workspaces';
 /** Calls exact Eliza Cloud models and meters provider-reported tokens against the current catalog. */
 import { z } from 'zod';
 import { CloudError, requireCondition } from './errors';
@@ -27,12 +29,82 @@ export function allowanceCost(price: ModelPrice, inputTokens: number, outputToke
   return Math.ceil((inputTokens * tier.prompt + outputTokens * tier.completion) * 120);
 }
 
+export const completionSchema = z.object({
+  model: z.string(),
+  choices: z
+    .array(
+      z.object({
+        finish_reason: z.string(),
+        message: z.object({ content: z.string().nullable() }),
+      }),
+    )
+    .min(1),
+  usage: z.object({
+    prompt_tokens: z.number().int().nonnegative(),
+    completion_tokens: z.number().int().nonnegative(),
+  }),
+});
+export type Completion = z.infer<typeof completionSchema>;
+
+export interface InferenceConfig {
+  apiOrigin: string;
+  appId: string;
+  clientId: string;
+  clientSecret: string;
+  developerApiKey: string;
+  billingEnvironment: 'test' | 'live';
+}
+export interface InferenceFunding {
+  billingAccountId: string;
+  productFamilyKey: string;
+  delegationToken: string;
+}
+
 export class InferenceClient {
+  private readonly sdk: AppInferenceClient;
+  get apiKey() {
+    return this.config.developerApiKey;
+  }
+  get origin() {
+    return this.config.apiOrigin;
+  }
   constructor(
-    readonly origin: string,
-    readonly apiKey: string,
+    readonly config: InferenceConfig,
     readonly request: typeof fetch = fetch,
-  ) {}
+  ) {
+    this.sdk = new AppInferenceClient(config.appId, {
+      apiBaseUrl: `${config.apiOrigin}/api/v1`,
+      clientId: config.clientId,
+      clientSecret: config.clientSecret,
+      developerApiKey: config.developerApiKey,
+      fetchImpl: (input, init) => request(input, { ...init, redirect: 'error' }),
+    });
+  }
+  funding(
+    organization: Pick<
+      Organization,
+      | 'cloud_app_id'
+      | 'cloud_billing_account_id'
+      | 'cloud_billing_environment'
+      | 'cloud_product_family_key'
+    >,
+    delegationToken: string,
+  ): InferenceFunding {
+    requireCondition(
+      organization.cloud_app_id === this.config.appId &&
+        organization.cloud_billing_environment === this.config.billingEnvironment &&
+        organization.cloud_billing_account_id &&
+        organization.cloud_product_family_key,
+      503,
+      'app_billing_not_ready',
+      'This workspace is not yet connected to Cloud app billing.',
+    );
+    return {
+      billingAccountId: organization.cloud_billing_account_id,
+      productFamilyKey: organization.cloud_product_family_key,
+      delegationToken,
+    };
+  }
 
   async price(model: string): Promise<ModelPrice> {
     requireCondition(
@@ -68,54 +140,49 @@ export class InferenceClient {
     schema: object;
     requestId: string;
     signal: AbortSignal;
+    funding: InferenceFunding;
   }) {
-    const response = await this.request(new URL('/api/v1/chat/completions', this.origin), {
-      method: 'POST',
-      redirect: 'error',
-      signal: AbortSignal.any([input.signal, AbortSignal.timeout(180_000)]),
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-        'Idempotency-Key': input.requestId,
-      },
-      body: JSON.stringify({
-        model: input.model,
-        messages: [
-          { role: 'system', content: input.system },
-          { role: 'user', content: input.prompt },
-        ],
-        stream: false,
-        max_completion_tokens: MAX_OUTPUT_TOKENS,
-        reasoning_effort: 'low',
-        response_format: {
-          type: 'json_schema',
-          json_schema: { name: 'outreachr_proposals', strict: true, schema: input.schema },
+    const operation = z
+      .object({
+        billingAccountId: z.uuid(),
+        productFamilyKey: z.string().min(1).max(128),
+        delegationToken: z.string().regex(/^ead_[A-Za-z0-9_-]{43}$/),
+      })
+      .safeParse(input.funding);
+    requireCondition(
+      operation.success,
+      503,
+      'app_billing_not_ready',
+      'Cloud app funding is not configured for this request.',
+    );
+    let response: unknown;
+    try {
+      response = await this.sdk.createChatCompletion(
+        { ...operation.data, operationId: input.requestId },
+        {
+          model: input.model,
+          messages: [
+            { role: 'system', content: input.system },
+            { role: 'user', content: input.prompt },
+          ],
+          stream: false,
+          max_completion_tokens: MAX_OUTPUT_TOKENS,
+          reasoning_effort: 'low',
+          response_format: {
+            type: 'json_schema',
+            json_schema: { name: 'outreachr_proposals', strict: true, schema: input.schema },
+          },
         },
-      }),
-    });
-    if (!response.ok)
+        { signal: input.signal, timeoutMs: 180_000 },
+      );
+    } catch {
       throw new CloudError(
         502,
         'inference_failed',
-        `Cloud inference did not return a confirmed result (${response.status}).`,
+        'Cloud inference did not return a confirmed result. Review the recorded run before retrying.',
       );
-    const result = z
-      .object({
-        model: z.string(),
-        choices: z
-          .array(
-            z.object({
-              finish_reason: z.string(),
-              message: z.object({ content: z.string().nullable() }),
-            }),
-          )
-          .min(1),
-        usage: z.object({
-          prompt_tokens: z.number().int().nonnegative(),
-          completion_tokens: z.number().int().nonnegative(),
-        }),
-      })
-      .parse(JSON.parse(await boundedResponseText(response, 2_000_000)));
+    }
+    const result = completionSchema.parse(response);
     requireCondition(
       result.model === input.model,
       502,
