@@ -177,7 +177,7 @@ async function createWindow(
       assertTrustedIpcSender(event);
       if (typeof text !== 'string' || text.length > 1_000_000)
         throw new Error('Invalid clipboard text');
-      clipboard.writeText(text);
+      return clipboard.writeText(text);
     });
     ipcMain.handle(
       IPC_CHANNELS.openLegal,
