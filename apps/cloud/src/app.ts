@@ -283,7 +283,7 @@ export function createApp(options: {
     c.json(await eliza.connections(c.get('session').grant)),
   );
   app.post('/api/google/connect', async (c) => {
-    const input = await c.req.json().catch(() => {
+    const input: unknown = await c.req.json().catch(() => {
       throw new CloudError(400, 'invalid_json', 'Invalid JSON body.');
     });
     z.object({}).strict().parse(input);
