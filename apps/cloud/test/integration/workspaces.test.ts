@@ -1308,12 +1308,18 @@ describe('managed Gmail end-to-end command flow', () => {
     const session = { userId: user.id, grant, expiresAt: new Date(Date.now() + 86400_000) };
     let sends = 0;
     let sentMime = '';
+    let mailboxState: 'connected' | 'disconnected' | 'unavailable' | 'unauthorized' = 'connected';
     const transport = new ElizaClient(
       delegationConfig('https://gmail.fixture.test'),
       async (url, init) => {
         expect(new Headers(init?.headers).get('X-App-Delegation')).toBe(grant);
         expect(new Headers(init?.headers).get('Authorization')).toMatch(/^Basic /);
-        if (String(url).endsWith('/google/connections'))
+        if (String(url).endsWith('/google/connections')) {
+          if (mailboxState === 'disconnected') return Response.json({ success: true, data: [] });
+          if (mailboxState === 'unauthorized')
+            return Response.json({ error: 'Unauthorized' }, { status: 401 });
+          if (mailboxState === 'unavailable')
+            return Response.json({ error: 'Unavailable' }, { status: 503 });
           return Response.json({
             success: true,
             data: [
@@ -1330,6 +1336,7 @@ describe('managed Gmail end-to-end command flow', () => {
               },
             ],
           });
+        }
         const operation = JSON.parse(String(init!.body));
         expect(operation.connectionId).toBe(connectionId);
         const endpoint = new URL(operation.url);
@@ -1420,5 +1427,41 @@ describe('managed Gmail end-to-end command flow', () => {
       (await runtime().bootstrap(session, user, org.id)).drafts.find((item) => item.id === draft.id)
         ?.providerMessageId,
     ).toBe('gmail-confirmed-receipt');
+    await pool.query(
+      "UPDATE outreachr.organizations SET trial_ends_at=now()-interval '1 day' WHERE id=$1",
+      [org.id],
+    );
+    for (const state of ['disconnected', 'unavailable'] as const) {
+      mailboxState = state;
+      const readable = await runtime().bootstrap(session, user, org.id);
+      expect(readable.drafts.find((item) => item.id === draft.id)?.providerMessageId).toBe(
+        'gmail-confirmed-receipt',
+      );
+      const output = await runtime().execute(session, user, org.id, 'data.exportCsv', {
+        directory: 'cloud-downloads',
+        kind: 'people',
+      });
+      const exported = await new FileStore(pool).get(user.id, org.id, output.path);
+      expect(exported.content.toString()).toContain('recipient@example.test');
+      await expect(
+        runtime().execute(session, user, org.id, 'draft.send', {
+          id: draft.id,
+          expectedContentHash: approved.contentHash,
+        }),
+      ).rejects.toThrow();
+      expect(sends).toBe(1);
+    }
+    mailboxState = 'unauthorized';
+    await expect(runtime().bootstrap(session, user, org.id)).rejects.toMatchObject({
+      code: 'eliza_authorization_expired',
+    });
+    mailboxState = 'connected';
+    await expect(
+      runtime().execute(session, user, org.id, 'person.create', {
+        firmId: firm.id,
+        name: 'No expired editing',
+        personalEmail: 'blocked@example.test',
+      }),
+    ).rejects.toMatchObject({ code: 'editing_seat_required' });
   }, 120_000);
 });
