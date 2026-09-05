@@ -40,3 +40,82 @@ jobs:
       - run: pnpm --filter @outreachr/cloud-web exec playwright install --with-deps chromium
       - run: pnpm --filter @outreachr/cloud-web test:e2e
       - run: pnpm --filter @outreachr/cloud-web exec wrangler deploy --dry-run
+  container:
+    name: Railway image startup and proxy boundary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: outreachr
+          POSTGRES_PASSWORD: local-test-password
+          POSTGRES_DB: outreachr_container
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U outreachr"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://outreachr:local-test-password@127.0.0.1:5432/outreachr_container
+      DATABASE_SSL: disable
+      PORT: 4174
+      PUBLIC_ORIGIN: https://outreachr.invalid
+      ELIZA_API_ORIGIN: https://api.invalid
+      ELIZA_LOGIN_ORIGIN: https://login.invalid
+      ELIZA_APP_ID: 00000000-0000-4000-8000-000000000001
+      ELIZA_CLIENT_SECRET: container-test-client-secret-no-provider-access
+      ELIZA_INFERENCE_API_KEY: container-test-key-no-provider-access
+      SESSION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      EDGE_SECRET: container-test-edge-secret-no-provider-access
+      REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.15.0
+      - name: Build the production image
+        run: docker build --tag outreachr-container-test --file apps/cloud/Dockerfile .
+      - name: Migrate the isolated test database using the packaged runtime
+        run: |
+          docker run --rm --network host \
+            -e DATABASE_SSL \
+            -e MIGRATION_DATABASE_URL="$DATABASE_URL" \
+            -e MIGRATION_EXPECT_DATABASE=outreachr_container \
+            outreachr-container-test \
+            node --import ./apps/cloud/node_modules/tsx/dist/loader.mjs apps/cloud/src/migrate.ts
+      - name: Start the production server
+        run: |
+          docker run --detach --name outreachr-container-test --network host \
+            -e DATABASE_URL -e DATABASE_SSL -e PORT -e PUBLIC_ORIGIN \
+            -e ELIZA_API_ORIGIN -e ELIZA_LOGIN_ORIGIN -e ELIZA_APP_ID \
+            -e ELIZA_CLIENT_SECRET -e ELIZA_INFERENCE_API_KEY \
+            -e SESSION_ENCRYPTION_KEY -e EDGE_SECRET -e REVISION \
+            outreachr-container-test
+          curl --fail --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:4174/health
+      - name: Verify packaged server and private proxy boundary
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          const origin = 'http://127.0.0.1:4174';
+          const health = await fetch(`${origin}/health`);
+          assert.equal(health.status, 200);
+          assert.deepEqual(await health.json(), { status: 'ok', revision: process.env.REVISION });
+          const direct = await fetch(`${origin}/api/config`);
+          assert.equal(direct.status, 403);
+          assert.equal((await direct.json()).code, 'edge_required');
+          const trusted = await fetch(`${origin}/api/config`, {
+            headers: { 'X-Outreachr-Edge': process.env.EDGE_SECRET },
+          });
+          assert.equal(trusted.status, 200);
+          assert.equal((await trusted.json()).revision, process.env.REVISION);
+          assert.equal(trusted.headers.get('cache-control'), 'no-store');
+          JS
+          test "$(docker exec outreachr-container-test id -u)" != 0
+      - name: Show container diagnostics
+        if: failure()
+        run: docker logs outreachr-container-test || true
+      - name: Remove the test container
+        if: always()
+        run: docker rm --force outreachr-container-test || true
