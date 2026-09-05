@@ -16,7 +16,11 @@ import {
   type CoreVault,
 } from '@outreachr/core';
 import { openNodeVault } from '@outreachr/core/node';
-import type { CalendarEvent, MailboxMessage } from '@outreachr/connectors';
+import {
+  hasRelationshipReadScope,
+  type CalendarEvent,
+  type MailboxMessage,
+} from '@outreachr/connectors';
 import { z } from 'zod';
 import { parseInvestorCsv, type InvestorCsvRow } from './investor-csv';
 import type {
@@ -336,12 +340,21 @@ const DEFAULT_CONNECTORS: ConnectorStatus[] = [
   },
 ];
 
+export interface VaultPersistence {
+  load(): Promise<Uint8Array | undefined>;
+  save(snapshot: Uint8Array): Promise<void>;
+}
+
 interface VaultServiceOptions {
   appVersion: string;
   platform: NodeJS.Platform;
   dataDirectory: string;
   resourceDirectory: string;
   now?: () => Date;
+  persistence?: VaultPersistence;
+  connectorIds?: Partial<Record<'google' | 'microsoft', string>>;
+  senderEmail?: string;
+  actorId?: string;
 }
 
 interface FirmRow {
@@ -587,6 +600,10 @@ export class VaultService {
     return this.#repository;
   }
 
+  connectorId(provider: 'google' | 'microsoft'): string {
+    return this.#options.connectorIds?.[provider] ?? `connector:${provider}`;
+  }
+
   async initialize(): Promise<void> {
     await mkdir(this.#options.dataDirectory, { recursive: true });
     const resetMarker = join(this.#options.dataDirectory, 'reset-on-next-launch');
@@ -602,10 +619,17 @@ export class VaultService {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
     let bytes: Uint8Array | undefined;
-    try {
-      bytes = await readBoundedFile(this.vaultPath, MAX_VAULT_OR_BACKUP_BYTES, 'Local vault');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    if (this.#options.persistence) {
+      bytes = await this.#options.persistence.load();
+      if (bytes && bytes.byteLength > MAX_VAULT_OR_BACKUP_BYTES) {
+        throw new Error('Workspace vault exceeds the supported size limit');
+      }
+    } else {
+      try {
+        bytes = await readBoundedFile(this.vaultPath, MAX_VAULT_OR_BACKUP_BYTES, 'Local vault');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
     }
     const packagedWasmPath = join(this.#options.resourceDirectory, 'sql-wasm.wasm');
     let wasmPath: string | undefined;
@@ -663,7 +687,11 @@ export class VaultService {
 
   persist(): Promise<void> {
     const snapshot = this.#vault.export();
-    const pending = this.#persistQueue.then(() => writeVaultSnapshot(this.vaultPath, snapshot));
+    const pending = this.#persistQueue.then(() =>
+      this.#options.persistence
+        ? this.#options.persistence.save(snapshot)
+        : writeVaultSnapshot(this.vaultPath, snapshot),
+    );
     this.#persistQueue = pending.catch(() => undefined);
     return pending;
   }
@@ -672,7 +700,7 @@ export class VaultService {
     appendAuditEntry(this.#vault, {
       occurredAt,
       actorType: 'founder',
-      actorId: 'founder',
+      actorId: this.#options.actorId ?? 'founder',
       action: 'connector.disconnected',
       entityType: 'connector',
       entityId: `connector:${provider}`,
@@ -690,7 +718,7 @@ export class VaultService {
     appendAuditEntry(this.#vault, {
       occurredAt: this.#now().toISOString(),
       actorType: 'founder',
-      actorId: 'founder',
+      actorId: this.#options.actorId ?? 'founder',
       action: 'data.reset_scheduled',
       entityType: 'vault',
       entityId: 'local',
@@ -1404,8 +1432,14 @@ export class VaultService {
     }>(
       `SELECT status,public_config_json,scopes_json FROM connector_configs
        WHERE provider=? AND lower(trim(account_label))=lower(trim(?))
+       AND (? IS NULL OR id=?)
        ORDER BY updated_at DESC LIMIT 1`,
-      [message.provider, message.sender_address],
+      [
+        message.provider,
+        message.sender_address,
+        this.#options.connectorIds?.[message.provider] ?? null,
+        this.connectorId(message.provider),
+      ],
     );
     if (!connector || connector.status !== 'connected') {
       sendBlockReasons.push(
@@ -1424,11 +1458,7 @@ export class VaultService {
       } catch {
         // Invalid connector configuration fails closed below.
       }
-      const readScope =
-        message.provider === 'google'
-          ? 'https://www.googleapis.com/auth/gmail.readonly'
-          : 'Mail.ReadBasic';
-      if (!relationshipSync || !scopes.includes(readScope)) {
+      if (!relationshipSync || !hasRelationshipReadScope(message.provider, scopes)) {
         sendBlockReasons.push(
           'Reconnect this provider with relationship sync enabled; complete mailbox reconciliation is required before sending.',
         );
@@ -1937,7 +1967,7 @@ export class VaultService {
       appendAuditEntry(this.#vault, {
         occurredAt: this.#now().toISOString(),
         actorType: 'founder',
-        actorId: 'founder',
+        actorId: this.#options.actorId ?? 'founder',
         action: 'target.removed',
         entityType: 'target',
         entityId: existing.id,
@@ -2090,7 +2120,7 @@ export class VaultService {
     appendAuditEntry(this.#vault, {
       occurredAt: now,
       actorType: 'founder',
-      actorId: 'founder',
+      actorId: this.#options.actorId ?? 'founder',
       action: 'person.created',
       entityType: 'person',
       entityId: personId,
@@ -2984,13 +3014,18 @@ export class VaultService {
     const id = `message:${randomUUID()}`;
     const round = this.#roundRow();
     const connectorAccount = this.#vault.one<{ account_label: string }>(
-      "SELECT account_label FROM connector_configs WHERE provider=? AND status='connected' ORDER BY updated_at DESC LIMIT 1",
-      [input.provider],
+      "SELECT account_label FROM connector_configs WHERE provider=? AND status='connected' AND (? IS NULL OR id=?) ORDER BY updated_at DESC LIMIT 1",
+      [
+        input.provider,
+        this.#options.connectorIds?.[input.provider] ?? null,
+        this.connectorId(input.provider),
+      ],
     );
     const founderEmail = this.#vault.scalar(
       'SELECT work_email FROM founder_profiles ORDER BY created_at LIMIT 1',
     );
-    const senderAddress = connectorAccount?.account_label ?? founderEmail;
+    const senderAddress =
+      connectorAccount?.account_label ?? this.#options.senderEmail ?? founderEmail;
     if (typeof senderAddress !== 'string' || !senderAddress.trim()) {
       throw new Error('Add a founder work email or connect the selected email provider first');
     }
@@ -3101,7 +3136,7 @@ export class VaultService {
     appendAuditEntry(this.#vault, {
       occurredAt: now,
       actorType: 'founder',
-      actorId: 'founder',
+      actorId: this.#options.actorId ?? 'founder',
       action: 'backup.exported',
       entityType: 'vault',
       entityId: 'local',
@@ -3145,7 +3180,7 @@ export class VaultService {
     appendAuditEntry(this.#vault, {
       occurredAt: this.#now().toISOString(),
       actorType: 'founder',
-      actorId: 'founder',
+      actorId: this.#options.actorId ?? 'founder',
       action: 'backup.restored',
       entityType: 'vault',
       entityId: 'local',
@@ -3199,7 +3234,7 @@ export class VaultService {
     appendAuditEntry(this.#vault, {
       occurredAt: this.#now().toISOString(),
       actorType: 'founder',
-      actorId: 'founder',
+      actorId: this.#options.actorId ?? 'founder',
       action: 'contribution.exported',
       entityType: 'contribution',
       entityId: result.logicalDigestSha256,
@@ -3381,7 +3416,7 @@ export class VaultService {
       appendAuditEntry(this.#vault, {
         occurredAt: this.#now().toISOString(),
         actorType: 'founder',
-        actorId: 'founder',
+        actorId: this.#options.actorId ?? 'founder',
         action: 'data.private_csv_imported',
         entityType: 'import',
         entityId: sha256,
@@ -3513,7 +3548,7 @@ export class VaultService {
     appendAuditEntry(this.#vault, {
       occurredAt: this.#now().toISOString(),
       actorType: 'founder',
-      actorId: 'founder',
+      actorId: this.#options.actorId ?? 'founder',
       action: 'data.private_csv_exported',
       entityType: 'export',
       entityId: kind,
@@ -3595,7 +3630,7 @@ export class VaultService {
     appendAuditEntry(this.#vault, {
       occurredAt: importedAt,
       actorType: 'founder',
-      actorId: 'founder',
+      actorId: this.#options.actorId ?? 'founder',
       action: result.alreadyImported ? 'seed.import_skipped' : 'seed.imported',
       entityType: 'seed_package',
       entityId: result.packageId,
@@ -3741,7 +3776,7 @@ export class VaultService {
       appendAuditEntry(this.#vault, {
         occurredAt: now,
         actorType: 'founder',
-        actorId: 'founder',
+        actorId: this.#options.actorId ?? 'founder',
         action: 'agent.proposal_applied',
         entityType: 'agent_proposal',
         entityId: proposal.id,
@@ -3838,13 +3873,18 @@ export class VaultService {
         throw new Error(person.suppressionReason ?? 'Initial outreach is blocked for this person');
       }
       const connectorAccount = this.#vault.one<{ account_label: string }>(
-        "SELECT account_label FROM connector_configs WHERE provider=? AND status='connected' ORDER BY updated_at DESC LIMIT 1",
-        [payload.provider],
+        "SELECT account_label FROM connector_configs WHERE provider=? AND status='connected' AND (? IS NULL OR id=?) ORDER BY updated_at DESC LIMIT 1",
+        [
+          payload.provider,
+          this.#options.connectorIds?.[payload.provider] ?? null,
+          this.connectorId(payload.provider),
+        ],
       );
       const founderEmail = this.#vault.scalar(
         'SELECT work_email FROM founder_profiles ORDER BY created_at LIMIT 1',
       );
-      const senderAddress = connectorAccount?.account_label ?? founderEmail;
+      const senderAddress =
+        connectorAccount?.account_label ?? this.#options.senderEmail ?? founderEmail;
       if (typeof senderAddress !== 'string' || !senderAddress.trim()) {
         throw new Error('Add a founder work email or connect the selected email provider first');
       }
@@ -3916,7 +3956,7 @@ export class VaultService {
         appendAuditEntry(this.#vault, {
           occurredAt: now,
           actorType: 'founder',
-          actorId: 'founder',
+          actorId: this.#options.actorId ?? 'founder',
           action: 'target.upsert',
           entityType: 'target',
           entityId: target.id,
@@ -3971,7 +4011,7 @@ export class VaultService {
       appendAuditEntry(this.#vault, {
         occurredAt: now,
         actorType: 'founder',
-        actorId: 'founder',
+        actorId: this.#options.actorId ?? 'founder',
         action: 'source.reviewed',
         entityType: 'claim',
         entityId: id,

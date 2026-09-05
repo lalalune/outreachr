@@ -50,7 +50,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'An unexpected error occurred.';
 }
 
-export function WorkspaceProvider({ children }: PropsWithChildren): React.JSX.Element {
+export function WorkspaceProvider({
+  children,
+  streamingAgent = false,
+}: PropsWithChildren<{ streamingAgent?: boolean }>): React.JSX.Element {
   const [data, setData] = useState<AppBootstrap | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -131,7 +134,8 @@ export function WorkspaceProvider({ children }: PropsWithChildren): React.JSX.El
           name.startsWith('communications.') ||
           name.startsWith('suppression.') ||
           name.startsWith('person.') ||
-          name.startsWith('agent.') ||
+          (name.startsWith('agent.') &&
+            !(streamingAgent && ['agent.run', 'agent.cancel'].includes(name))) ||
           name.startsWith('knowledge.') ||
           name === 'data.importInvestorCsv'
         ) {
@@ -146,7 +150,7 @@ export function WorkspaceProvider({ children }: PropsWithChildren): React.JSX.El
         throw cause;
       }
     },
-    [load, notify],
+    [load, notify, streamingAgent],
   );
 
   const getInvestor = useCallback((id: string) => command('investor.get', { id }), [command]);

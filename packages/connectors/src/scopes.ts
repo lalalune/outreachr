@@ -55,3 +55,17 @@ export function getScopes(
 ): string[] {
   return [...SCOPE_PROFILES[provider][profile]];
 }
+
+/** Full reconciliation uses search; Google's metadata-only scope cannot authorize that query. */
+export function hasRelationshipReadScope(
+  provider: ConnectorProvider,
+  scopes: readonly string[],
+): boolean {
+  return provider === 'google'
+    ? [
+        'https://www.googleapis.com/auth/gmail.readonly',
+        'https://www.googleapis.com/auth/gmail.modify',
+        'https://mail.google.com/',
+      ].some((scope) => scopes.includes(scope))
+    : ['Mail.ReadBasic', 'Mail.Read', 'Mail.ReadWrite'].some((scope) => scopes.includes(scope));
+}

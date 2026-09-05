@@ -6,6 +6,7 @@ import {
   exchangeAuthorizationCode,
   fingerprintEmail,
   getScopes,
+  hasRelationshipReadScope,
   GoogleConnector,
   MicrosoftConnector,
   normalizeEmail,
@@ -29,9 +30,14 @@ const MAX_CALENDAR_SYNC_PAGES = 10_000;
 const OAUTH_CALLBACK_TIMEOUT_MS = 5 * 60 * 1_000;
 const MAX_OAUTH_CALLBACK_URL_CHARS = 4_096;
 
+export type ConnectorSecretStore = Pick<
+  SecureStore,
+  'get' | 'set' | 'delete' | 'status' | 'bindVault'
+>;
+
 interface ConnectorServiceOptions {
   vault: VaultService;
-  secureStore: SecureStore;
+  secureStore: ConnectorSecretStore;
   openExternal: (url: string) => Promise<void>;
   fetch?: typeof fetch;
   now?: () => Date;
@@ -66,10 +72,6 @@ interface StoredTokens extends OAuthTokenSet {
 
 function secretKey(provider: ConnectorProvider): string {
   return `oauth/${provider}/tokens`;
-}
-
-function connectorId(provider: ConnectorProvider): string {
-  return `connector:${provider}`;
 }
 
 function parseJson<T>(value: string): T {
@@ -402,7 +404,7 @@ class CalendarOnlyLedger implements SendAttemptLedger {
 
 export class ConnectorService {
   readonly #vault: VaultService;
-  readonly #secureStore: SecureStore;
+  readonly #secureStore: ConnectorSecretStore;
   readonly #openExternal: (url: string) => Promise<void>;
   readonly #fetch: typeof fetch;
   readonly #now: () => Date;
@@ -430,7 +432,7 @@ export class ConnectorService {
       scopes_json: string;
     }>(
       'SELECT public_config_json,account_label,status,scopes_json FROM connector_configs WHERE id=?',
-      [connectorId(provider)],
+      [this.#vault.connectorId(provider)],
     );
     return row
       ? {
@@ -498,7 +500,7 @@ export class ConnectorService {
       input.relationshipSync ? 'relationship-sync' : 'minimum',
     );
     this.#vault.repository.upsertConnectorConfig({
-      id: connectorId(input.provider),
+      id: this.#vault.connectorId(input.provider),
       provider: input.provider,
       accountLabel: `${input.provider}:configured`,
       publicConfig: {
@@ -556,7 +558,7 @@ export class ConnectorService {
       } satisfies StoredTokens);
       const now = this.#now().toISOString();
       this.#vault.repository.upsertConnectorConfig({
-        id: connectorId(provider),
+        id: this.#vault.connectorId(provider),
         provider,
         accountLabel: accountEmail,
         publicConfig: { ...config.publicConfig },
@@ -584,7 +586,7 @@ export class ConnectorService {
     if (provider === 'google') this.#secureStore.delete('oauth/google/client');
     this.#vault.vault.run(
       "UPDATE connector_configs SET status='disabled',updated_at=? WHERE id=?",
-      [now, connectorId(provider)],
+      [now, this.#vault.connectorId(provider)],
     );
     this.#vault.recordConnectorDisconnect(provider, now);
     this.#errors.delete(provider);
@@ -631,10 +633,7 @@ export class ConnectorService {
     config: { publicConfig: PublicConfig; scopes: string[] },
   ): boolean {
     if (!config.publicConfig.relationshipSync) return false;
-    const minimum = new Set(getScopes(provider, 'minimum'));
-    return getScopes(provider, 'relationship-sync')
-      .filter((scope) => !minimum.has(scope))
-      .every((scope) => config.scopes.includes(scope));
+    return hasRelationshipReadScope(provider, config.scopes);
   }
 
   async #storeMailSyncProgress(
@@ -648,7 +647,7 @@ export class ConnectorService {
   ): Promise<void> {
     const updatedAt = this.#now().toISOString();
     this.#vault.repository.upsertConnectorConfig({
-      id: connectorId(provider),
+      id: this.#vault.connectorId(provider),
       provider,
       accountLabel: config.accountLabel,
       publicConfig: { ...config.publicConfig, mailSyncProgress: progress },
@@ -745,7 +744,7 @@ export class ConnectorService {
     };
     delete completedConfig.mailSyncProgress;
     this.#vault.repository.upsertConnectorConfig({
-      id: connectorId(provider),
+      id: this.#vault.connectorId(provider),
       provider,
       accountLabel: config.accountLabel,
       publicConfig: { ...completedConfig },
@@ -800,7 +799,7 @@ export class ConnectorService {
     const syncedAt = this.#now().toISOString();
     await this.#vault.importCalendarEvents(provider, events);
     this.#vault.repository.upsertConnectorConfig({
-      id: connectorId(provider),
+      id: this.#vault.connectorId(provider),
       provider,
       accountLabel: config.accountLabel,
       publicConfig: {

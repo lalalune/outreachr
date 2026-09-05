@@ -1,0 +1,31 @@
+{
+  "name": "@outreachr/cloud",
+  "version": "0.1.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run test/unit",
+    "test:integration": "vitest run test/integration",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.11",
+    "@outreachr/core": "workspace:*",
+    "@outreachr/agents": "workspace:*",
+    "@outreachr/connectors": "workspace:*",
+    "hono": "4.13.1",
+    "pg": "8.23.0",
+    "stripe": "^22.0.0",
+    "tsx": "^4.21.0",
+    "zod": "4.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.0",
+    "@types/pg": "^8.21.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
+  }
+}

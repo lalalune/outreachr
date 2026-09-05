@@ -1,0 +1,42 @@
+name: Verify cloud application
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cloud-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  cloud:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: outreachr
+          POSTGRES_PASSWORD: local-test-password
+        ports: [5432:5432]
+        options: >-
+          --health-cmd "pg_isready -U outreachr"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://outreachr:local-test-password@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.15.0
+      - run: corepack enable && corepack prepare pnpm@11.18.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:packages
+      - run: pnpm --filter @outreachr/cloud typecheck && pnpm --filter @outreachr/cloud-web build
+      - run: pnpm --filter @outreachr/cloud test && pnpm --filter @outreachr/cloud test:integration
+      - run: pnpm --filter @outreachr/cloud-web exec playwright install --with-deps chromium
+      - run: pnpm --filter @outreachr/cloud-web test:e2e
+      - run: pnpm --filter @outreachr/cloud-web exec wrangler deploy --dry-run

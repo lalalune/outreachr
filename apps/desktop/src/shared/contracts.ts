@@ -356,6 +356,7 @@ export interface SourceReviewItem {
 }
 
 export interface AppBootstrap {
+  hosting?: 'cloud';
   appVersion: string;
   platform: 'darwin' | 'win32' | 'linux' | 'other';
   vaultPath: string;
