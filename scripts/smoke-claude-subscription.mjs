@@ -3,7 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ClaudeAgentAdapter, createAllowlist } from '../packages/agents/dist/index.js';
+import {
+  ClaudeAgentAdapter,
+  createAllowlist,
+  grantCapability,
+} from '../packages/agents/dist/index.js';
 
 if (process.env.OUTREACHR_LIVE_CLAUDE_SMOKE !== '1') {
   throw new Error(
@@ -36,7 +40,10 @@ try {
       provider: 'claude',
       intent:
         'Return a concise summary containing the exact words "Claude subscription smoke passed" and no proposals. Do not call tools.',
-      allowlist: createAllowlist(),
+      allowlist: grantCapability(createAllowlist(), {
+        provider: 'claude',
+        capability: 'propose.task',
+      }),
       context: [],
       timeoutMs: 5 * 60_000,
       maxTurns: 1,
