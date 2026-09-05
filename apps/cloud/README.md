@@ -41,7 +41,9 @@ contract and remaining acceptance checks are in
    consumes Cloud's signed notifications and authoritative entitlement snapshots.
    Keep app subscriptions separate from personal Eliza plans and developer usage.
 4. Apply `src/migrate.ts` with an administrative `MIGRATION_DATABASE_URL` and
-   explicit `MIGRATION_EXPECT_DATABASE`. It creates only the `outreachr` schema.
+   explicit `MIGRATION_EXPECT_DATABASE`. Set `MIGRATION_RUNTIME_ROLE` to the existing
+   restricted application login role to apply current and future table/sequence
+   permissions within `outreachr`. It creates only the `outreachr` schema.
    Give the runtime role usage on that schema, DML on its tables, and sequence
    usage. Verify that it cannot read or write existing Cloud tables. Never give
    the BFF the administrative database credential.

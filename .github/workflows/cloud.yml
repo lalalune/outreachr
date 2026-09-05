@@ -58,7 +58,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://outreachr:local-test-password@127.0.0.1:5432/outreachr_container
+      MIGRATION_DATABASE_URL: postgres://outreachr:local-test-password@127.0.0.1:5432/outreachr_container
+      DATABASE_URL: postgres://outreachr_container_runtime:local-runtime-password@127.0.0.1:5432/outreachr_container
       DATABASE_SSL: disable
       PORT: 4174
       PUBLIC_ORIGIN: https://outreachr.invalid
@@ -81,14 +82,23 @@ jobs:
           node-version: 24.15.0
       - name: Build the production image
         run: docker build --tag outreachr-container-test --file apps/cloud/Dockerfile .
+      - name: Prepare a separate restricted runtime role
+        run: |
+          docker run --rm --network host -e MIGRATION_DATABASE_URL outreachr-container-test \
+            node apps/cloud/test/container-permissions.mjs prepare
       - name: Migrate the isolated test database using the packaged runtime
         run: |
           docker run --rm --network host \
             -e DATABASE_SSL \
-            -e MIGRATION_DATABASE_URL="$DATABASE_URL" \
+            -e MIGRATION_DATABASE_URL \
             -e MIGRATION_EXPECT_DATABASE=outreachr_container \
+            -e MIGRATION_RUNTIME_ROLE=outreachr_container_runtime \
             outreachr-container-test \
             node --import ./apps/cloud/node_modules/tsx/dist/loader.mjs apps/cloud/src/migrate.ts
+      - name: Verify restricted runtime writes and schema isolation
+        run: |
+          docker run --rm --network host -e DATABASE_URL outreachr-container-test \
+            node apps/cloud/test/container-permissions.mjs verify
       - name: Start the production server
         run: |
           docker run --detach --name outreachr-container-test --network host \
