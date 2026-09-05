@@ -13,12 +13,11 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.11",
-    "@outreachr/core": "workspace:*",
     "@outreachr/agents": "workspace:*",
     "@outreachr/connectors": "workspace:*",
+    "@outreachr/core": "workspace:*",
     "hono": "4.13.1",
     "pg": "8.23.0",
-    "stripe": "^22.0.0",
     "tsx": "^4.21.0",
     "zod": "4.5.1"
   },

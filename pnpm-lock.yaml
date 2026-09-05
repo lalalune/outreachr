@@ -63,9 +63,6 @@ importers:
       pg:
         specifier: 8.23.0
         version: 8.23.0
-      stripe:
-        specifier: ^22.0.0
-        version: 22.6.1(@types/node@26.4.0)
       tsx:
         specifier: ^4.21.0
         version: 4.23.13
@@ -3555,15 +3552,6 @@ packages:
   strip-indent@3.0.0:
     resolution: {integrity: sha512-laJTa3Jb+VQpaC6DseHhF7dXVqHTfJPCRDaEbid/drOhgitgYku/letMUqOXFoWV0zIIUbjpdH2t+tYj4bQMRQ==}
     engines: {node: '>=8'}
-
-  stripe@22.6.1:
-    resolution: {integrity: sha512-hAKSkGeVt2u46TRYhmnvwmVHxBNtOCJnPjc+SH5sP2B2ypElYzAAY3Ljx0Ar8C2w8nfpFQiZ95qoDCDsFkXMTA==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      '@types/node': '>=18'
-    peerDependenciesMeta:
-      '@types/node':
-        optional: true
 
   sumchecker@3.0.1:
     resolution: {integrity: sha512-MvjXzkz/BOfyVDkG0oFOtBxHX2u3gKbMHIF/dXblZsgD3BWOFLmHovIpZY7BykJdAjcqRCBi1WYBNdEC9yI7vg==}
@@ -7223,10 +7211,6 @@ snapshots:
   strip-indent@3.0.0:
     dependencies:
       min-indent: 1.0.1
-
-  stripe@22.6.1(@types/node@26.4.0):
-    optionalDependencies:
-      '@types/node': 26.4.0
 
   sumchecker@3.0.1(supports-color@10.2.2):
     dependencies:
