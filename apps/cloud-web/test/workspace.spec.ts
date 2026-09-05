@@ -72,6 +72,33 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop', exact: true })).toHaveCount(0);
   await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+  await page.context().route('https://accounts.google.com/o/oauth2/**', async (route) => {
+    const state = new URL(route.request().url()).searchParams.get('state');
+    expect(state).toBeTruthy();
+    await route.fulfill({
+      contentType: 'text/html',
+      body: `<html lang="en"><title>Local Google consent fixture</title><h1>Local Google consent fixture</h1><a href="http://127.0.0.1:4175/google-complete?state=${encodeURIComponent(state!)}">Authorize fixture mailbox</a></html>`,
+    });
+  });
+  const consentPromise = page.waitForEvent('popup');
+  await page.getByRole('button', { name: 'Connect Google account', exact: true }).click();
+  const consent = await consentPromise;
+  await consent.getByRole('link', { name: 'Authorize fixture mailbox' }).click();
+  await expect(
+    consent.getByRole('heading', { name: 'Fixture Google account connected' }),
+  ).toBeVisible();
+  await consent.close();
+  await page.bringToFront();
+  await page.getByRole('button', { name: 'Refresh connections', exact: true }).click();
+  await page
+    .getByRole('combobox', { name: 'Gmail mailbox', exact: true })
+    .selectOption({ label: 'owner@example.test' });
+  await page.getByRole('button', { name: 'Save mailbox', exact: true }).click();
+  await expect(page.getByRole('main').getByRole('status')).toHaveText('Saved.');
+  await page.reload();
+  await expect(page.getByRole('combobox', { name: 'Gmail mailbox', exact: true })).not.toHaveValue(
+    '',
+  );
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export people CSV' }).click();
   const download = await downloadPromise;
@@ -90,6 +117,14 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
     .selectOption({ label: 'Test Owner workspace' });
   await expect(viewer.getByText(/Viewer access/)).toBeVisible();
   await viewer.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+  await expect(
+    viewer.getByRole('button', { name: 'Connect Google account', exact: true }),
+  ).toBeDisabled();
+  await expect(
+    viewer
+      .getByRole('combobox', { name: 'Gmail mailbox', exact: true })
+      .getByRole('option', { name: 'owner@example.test' }),
+  ).toHaveCount(0);
   await expect(
     viewer.getByRole('button', { name: 'Review subscription', exact: true }),
   ).toBeDisabled();

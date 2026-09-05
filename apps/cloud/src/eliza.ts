@@ -125,6 +125,26 @@ export class ElizaClient {
       )
     ).connections;
   }
+  async connectGoogle(grant: string) {
+    const result = await this.json(
+      await this.response('/google/connect', grant, { method: 'POST', body: '{}' }),
+      z.object({ success: z.literal(true), authUrl: z.string().url() }),
+    );
+    const target = new URL(result.authUrl);
+    if (
+      target.origin !== 'https://accounts.google.com' ||
+      !['/o/oauth2/v2/auth', '/o/oauth2/auth'].includes(target.pathname) ||
+      target.username ||
+      target.password ||
+      target.hash
+    )
+      throw new CloudError(
+        502,
+        'google_authorization_invalid',
+        'Eliza returned an invalid Google authorization URL.',
+      );
+    return { authUrl: target.href };
+  }
   async revoke(grant: string) {
     await this.json(
       await this.response('/revoke', grant, { method: 'POST' }),

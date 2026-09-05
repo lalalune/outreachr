@@ -63,7 +63,37 @@ export function Settings({
   }, [base, admin]);
   useEffect(() => {
     void load().catch((cause: Error) => setError(cause.message));
+    const refreshOnFocus = () => {
+      void load().catch((cause: Error) => setError(cause.message));
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    return () => window.removeEventListener('focus', refreshOnFocus);
   }, [load]);
+  async function connectGoogle() {
+    const popup = window.open('about:blank', '_blank');
+    if (!popup) {
+      setError('Allow pop-ups to connect your Google account.');
+      return;
+    }
+    popup.opener = null;
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const { authUrl } = await post<{ authUrl: string }>('/api/google/connect', {});
+      if (popup.closed) {
+        setNotice('Google connection cancelled.');
+        return;
+      }
+      popup.location.replace(authUrl);
+      setNotice('Complete Google authorization in the new tab, then refresh connections here.');
+    } catch (cause) {
+      popup.close();
+      setError(cause instanceof Error ? cause.message : 'Google authorization could not start.');
+    } finally {
+      setBusy(false);
+    }
+  }
   async function act(work: () => Promise<unknown>, message = 'Saved.') {
     setBusy(true);
     setError('');
@@ -290,13 +320,12 @@ export function Settings({
           Your mailbox authorization stays with your Eliza account. Other members select their own
           mailbox.
         </p>
-        <a
-          href="https://cloud.eliza.app/settings?section=connectors"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Manage Google connections in Eliza
-        </a>
+        <button disabled={busy || !org.entitlement.canEdit} onClick={() => void connectGoogle()}>
+          Connect Google account
+        </button>
+        <button disabled={busy} onClick={() => void act(() => refresh(), 'Connections refreshed.')}>
+          Refresh connections
+        </button>
         <label>
           Gmail mailbox
           <select

@@ -282,6 +282,13 @@ export function createApp(options: {
   app.get('/api/google/connections', async (c) =>
     c.json(await eliza.connections(c.get('session').grant)),
   );
+  app.post('/api/google/connect', async (c) => {
+    const input = await c.req.json().catch(() => {
+      throw new CloudError(400, 'invalid_json', 'Invalid JSON body.');
+    });
+    z.object({}).strict().parse(input);
+    return c.json(await eliza.connectGoogle(c.get('session').grant));
+  });
   app.post('/api/organizations/:orgId/billing/checkout', async (c) => {
     const input = z
       .object({ plan: z.enum(['sol', 'astra']), seats: z.number().int().min(1).max(1000) })

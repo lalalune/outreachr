@@ -245,6 +245,8 @@ describe('HTTP login and workspace boundary', () => {
     const elizaPrincipal = { ...account, organizationId: randomUUID() };
     const grants = new Set<string>();
     let exchanges = 0;
+    let googleStarts = 0;
+    let googleAuthUrl = 'https://accounts.google.com/o/oauth2/v2/auth?state=fixture';
     const provider: typeof fetch = async (input, init) => {
       const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
       if (path.endsWith('/token')) {
@@ -260,6 +262,11 @@ describe('HTTP login and workspace boundary', () => {
       }
       const token = new Headers(init?.headers).get('Authorization')?.slice(7) ?? '';
       if (!grants.has(token)) return Response.json({ error: 'Revoked' }, { status: 401 });
+      if (path.endsWith('/google/connect')) {
+        googleStarts += 1;
+        expect(init?.body).toBe('{}');
+        return Response.json({ success: true, authUrl: googleAuthUrl });
+      }
       if (path.endsWith('/revoke')) {
         grants.delete(token);
         return Response.json({ success: true });
@@ -325,6 +332,27 @@ describe('HTTP login and workspace boundary', () => {
       'Content-Type': 'application/json',
       'X-Outreachr-Request': '1',
     };
+    const connect = (body = '{}', headers = mutationHeaders) =>
+      app.request('/api/google/connect', {
+        method: 'POST',
+        headers,
+        body,
+      });
+    expect((await connect('{}', { ...mutationHeaders, Cookie: '' })).status).toBe(401);
+    expect(
+      (await connect('{}', { ...mutationHeaders, Origin: 'https://attacker.test' })).status,
+    ).toBe(403);
+    expect((await connect(JSON.stringify({ userId: randomUUID() }))).status).toBe(400);
+    expect((await connect('{')).status).toBe(400);
+    expect(googleStarts).toBe(0);
+    const authorization = await connect();
+    expect(authorization.status).toBe(200);
+    expect(await authorization.json()).toEqual({ authUrl: googleAuthUrl });
+    expect(googleStarts).toBe(1);
+    googleAuthUrl = 'https://attacker.test/authorize';
+    const invalidRedirect = await connect();
+    expect(invalidRedirect.status).toBe(502);
+    expect((await invalidRedirect.json()).code).toBe('google_authorization_invalid');
     const inviter = identity();
     const invitedOrg = (await store.signIn(inviter)).organizations[0]!;
     const staleEmailInvite = await store.invite(inviter.id, invitedOrg.id, account.email, 'viewer');
@@ -365,6 +393,8 @@ describe('HTTP login and workspace boundary', () => {
     ).toBe(200);
     expect(grants.size).toBe(0);
     expect((await app.request('/api/me', { headers: { Cookie: cookie } })).status).toBe(401);
+    expect((await connect()).status).toBe(401);
+    expect(googleStarts).toBe(2);
   });
 });
 

@@ -41,6 +41,8 @@ const viewer = {
 };
 const codes = new Map<string, typeof owner>();
 const grants = new Map<string, typeof owner>();
+const googleStates = new Map<string, typeof owner>();
+const googleAccounts = new Map<string, { id: string; email: string }>();
 const fixture = new Hono();
 fixture.get('/app-auth/authorize', (c) => {
   if (
@@ -83,9 +85,60 @@ fixture.post('/api/v1/outreachr/revoke', (c) => {
   grants.delete(c.req.header('Authorization')?.replace('Bearer ', '') ?? '');
   return c.json({ success: true });
 });
-fixture.get('/api/v1/outreachr/google/connections', (c) =>
-  c.json({ success: true, connections: [] }),
-);
+fixture.post('/api/v1/outreachr/google/connect', (c) => {
+  const user = grants.get(c.req.header('Authorization')?.replace('Bearer ', '') ?? '');
+  if (!user) return c.json({ error: 'Signed out' }, 401);
+  const state = randomUUID();
+  googleStates.set(state, user);
+  const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authUrl.searchParams.set('state', state);
+  return c.json({ success: true, authUrl: authUrl.href });
+});
+fixture.get('/google-complete', (c) => {
+  const state = c.req.query('state') ?? '';
+  const user = googleStates.get(state);
+  googleStates.delete(state);
+  if (!user) return c.text('Invalid fixture authorization', 400);
+  googleAccounts.set(user.id, { id: randomUUID(), email: user.email });
+  return c.html(
+    '<html lang="en"><title>Local Google fixture</title><h1>Fixture Google account connected</h1><p>Close this tab and return to Outreachr.</p></html>',
+  );
+});
+fixture.get('/api/v1/outreachr/google/connections', (c) => {
+  const user = grants.get(c.req.header('Authorization')?.replace('Bearer ', '') ?? '');
+  if (!user) return c.json({ error: 'Signed out' }, 401);
+  const account = googleAccounts.get(user.id);
+  return c.json({
+    success: true,
+    connections: account
+      ? [
+          {
+            connectionId: account.id,
+            connected: true,
+            configured: true,
+            identity: { email: account.email },
+            reason: 'connected',
+            grantedScopes: [
+              'openid',
+              'https://www.googleapis.com/auth/userinfo.email',
+              'https://www.googleapis.com/auth/userinfo.profile',
+              'https://www.googleapis.com/auth/gmail.readonly',
+              'https://www.googleapis.com/auth/gmail.send',
+              'https://www.googleapis.com/auth/calendar.readonly',
+              'https://www.googleapis.com/auth/calendar.events',
+            ],
+            grantedCapabilities: [
+              'google.basic_identity',
+              'google.gmail.triage',
+              'google.gmail.send',
+              'google.calendar.read',
+              'google.calendar.write',
+            ],
+          },
+        ]
+      : [],
+  });
+});
 fixture.get('/api/v1/models', (c) =>
   c.json({
     data: [
