@@ -2,6 +2,11 @@
 
 Research completed 2026-09-04. This plan precedes implementation.
 
+The Cloud API and billing boundaries below are superseded by
+[App subscriptions on Eliza Cloud](app-billing-and-shipping-plan.md).
+Use generic Cloud app registration, delegation, and subscription APIs; do not
+add product-specific Cloud routes or move Stripe processing into Outreachr.
+
 ## Product decisions
 
 Keep the desktop application available. Add a hosted version of the same CRM,

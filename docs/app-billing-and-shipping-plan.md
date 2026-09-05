@@ -1,60 +1,63 @@
-# Independent app billing and Outreachr shipping plan
+# App subscriptions on Eliza Cloud: Outreachr shipping plan
 
-Decision updated 2026-09-05 following the product boundary correction. This supersedes the Outreachr-specific Cloud integration sections of `cloud-implementation-plan.md`.
+Decision updated 2026-09-05 after clarifying the platform boundary. This supersedes the product-specific Cloud API design in `cloud-implementation-plan.md` and the earlier proposal to move Stripe into Outreachr.
 
-## Separate the three commercial relationships
+## Commercial boundaries
 
-| Relationship | Payer | Product and authority |
-| --- | --- | --- |
-| Outreachr subscription | Outreachr workspace owner | Outreachr editing seats, seven-day trial, Sol/Astra plan, app entitlements |
-| Eliza Cloud usage | Outreachr operator / app developer | App infrastructure and inference usage, attributed to the registered app and billed to its operator |
-| Eliza personal app/agent subscription | A customer choosing that separate product | Eliza personal-agent features and capacity; never an Outreachr prerequisite or entitlement |
+| Relationship                             | Payer                          | Authority                                                                                          |
+| ---------------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Outreachr subscription                   | Outreachr workspace owner      | Cloud app subscription scoped to Outreachr and its workspace; Outreachr enforces its product rules |
+| Eliza Cloud infrastructure and inference | App developer/operator         | Cloud usage ledger attributed to the registered app and billed to its operator                     |
+| Eliza personal app/agent subscription    | Customer choosing that product | Separate personal-agent subscription and entitlements                                              |
 
-One identity may participate in all three. Sharing login does not share subscriptions, credits, workspaces, customer records, or billing portals. Cancelling Eliza personal-agent service must not cancel Outreachr. Paying Eliza must not unlock Outreachr. Outreachr users should not buy Cloud credits to use the AI included in their Outreachr plan.
+All three can use the same Cloud identity and Stripe infrastructure. They must retain separate subscriptions and billing scopes. Paying for the Eliza personal app must not unlock Outreachr; cancelling it must not cancel Outreachr. Outreachr customers must not buy personal Cloud credits to use AI included in their app plan.
 
-## Decision for Outreachr now
+## Platform and app responsibilities
 
-Outreachr owns Stripe Billing in its Railway backend: Checkout, dedicated customers and prices, portal configuration, webhook signature verification, and subscription reconciliation. Its own database owns workspace memberships, trials, seat capacity, and derived access. Its Stripe webhook terminates directly in Outreachr; billing must continue working when the Eliza API is unavailable.
+Eliza Cloud owns the generic app registry, app credentials, declared subscription plans, Stripe products/prices, checkout, billing portals, subscription lifecycle, verified webhook processing, and authoritative app subscription state. These capabilities are available to registered applications. Resolve scope from authenticated app registration, not a product name or an `OUTREACHR_*` environment variable.
 
-Keep the agreed seven-day no-card trial, $49 per editing seat/month for Sol, $200 for Astra, and free viewers. Invitations do not buy seats. Owners approve seat purchases; preserve read/export access after expiry. Keep existing usage reservations and bounded AI allowances; the app operator pays the actual Cloud usage bill.
+Outreachr declares its plans and trial configuration through that contract, requests checkout for its own workspace, and reads the resulting entitlement. Its backend owns memberships, invitations, editing-seat enforcement, usage allowances, data, and a local projection of Cloud subscription state. It must not contain a parallel Stripe integration, Stripe secrets, or direct Stripe webhook verification. The existing Cloud app monetization approval rules still apply; registration must not silently bypass them.
 
-Use the merchant Stripe account configured for Outreachr. If the same business operates Eliza and Outreachr, distinct products/customers/portal settings and app/workspace metadata can isolate the subscriptions within its existing Stripe account. Never reuse the personal Eliza subscription customer or present its products in Outreachr's portal. An unrelated app builder supplies its own Stripe merchant account. Do not create an additional financial account merely to ship this first-party app.
+Use the built-in Cloud Stripe infrastructure for launch. A separate Stripe account, bring-your-own Stripe integration, or new Stripe Connect setup is not a prerequisite in this plan. Broader merchant settlement policy belongs to the generic platform billing task.
 
-A future Cloud-managed billing option can use Stripe Connect, scoped by app and connected merchant account, so builders can sell subscriptions to their customers while Cloud separately bills builders. That is generic platform work, not an Outreachr launch dependency. Do not build a marketplace, payout system, or shared entitlement engine for this release.
+Managed Google access also uses a generic registered-app delegation. The signed-in person explicitly authorizes connector capabilities; Cloud retains and refreshes provider credentials. App registration and a login code alone must not grant mailbox access. Never use the operator's inference API key as the end user's Google authority.
 
-## Code research
+## Outreachr product configuration
 
-- Eliza `packages/cloud/api/v1/app-auth/connect/route.ts` and `session/route.ts` already implement registered-app authorization and a one-time identity-code exchange. Those handlers do not check a personal-agent subscription.
-- Eliza `packages/cloud/api/v1/apps/[id]/charges/route.ts` and `shared/src/lib/services/app-charge-requests.ts` sell app credits using Stripe `mode: payment`. This is not recurring app SaaS billing.
-- Eliza `shared/src/lib/services/app-credits.ts` states that app purchases and app inference use the shared organization credit ledger. Routing Outreachr seat payments through that path would conflate product access and Cloud consumption.
-- Outreachr `apps/cloud/src/billing.ts` already owns workspace entitlement projections, checkout attempt persistence, idempotency and locking, but calls `ElizaClient.billing`. Replace that transport with an app-owned Stripe billing client.
-- The recently added Eliza `v1/outreachr` routes, service modules, bindings and delegation schema violate the desired generic platform boundary. Their removal/replacement is required; they are not an acceptable final state.
-- Generic Google OAuth exists, but a registered-app login code currently proves identity only. It does not authorize an arbitrary app to use the user's managed mailbox. Raw provider-token export is deliberately removed. Never substitute an operator API key for the customer's mailbox authority.
+- Sol: $49 per editing seat/month, `openai/gpt-5.6-sol`.
+- Astra: $200 per editing seat/month, `openai/gpt-6-astra`.
+- Seven-day no-card trial once per verified identity, applied to the default workspace. Preserve existing trial start and end dates when adopting Cloud authority; migration must not restart the clock.
+- Owner, admin, and member consume editing seats. Viewers are free. Invitations do not purchase seats; owners explicitly approve purchases.
+- Preserve read/export access after expiry. Enforce seat capacity and the selected model on the server.
+- Current bounded AI allowance: $2 during trial, $15 per Sol seat/month, $70 per Astra seat/month, pooled within the workspace with no automatic overage. These are app allowance settings, not representations of the operator's final Cloud invoice.
 
-## Implementation order
+## Source findings and implementation scope
 
-1. Move the existing scoped Stripe operations and their behavioral tests into Outreachr. Separate the billing interface from Eliza identity/Google transport. Configure app Stripe key, Sol/Astra price IDs and webhook secret in the BFF. Retain exact price/customer/workspace checks and durable reconciliation.
-2. Keep login, inference and Gmail behind explicit provider interfaces in Outreachr. Use existing generic registered-app login and app-attributed inference wherever sufficient. No Eliza personal-agent onboarding or subscription requirement may enter the customer flow.
-3. Remove the bespoke Outreachr addition from Eliza. The only permissible companion feature, if needed for managed Gmail, is a small generic registered-app delegation contract: app-scoped client authentication, explicit user consent to named connector capabilities, owner-bound connection access, expiry/revocation and replay rejection. Resolve registrations from app records, not OUTREACHR_* environment variables. No prices, plan names, workspace rules, or product-specific code belongs there. Do not represent a simple rename of hardcoded behavior as generic functionality.
-4. Keep app-specific implementation and deployment work in Outreachr. Update the two draft PRs or supersede them after the revised boundaries are implemented and tested. No additional Outreachr-specific Cloud route should merge.
-5. Configure and deploy the reviewed app revision to Railway and Cloudflare. Verify actual identity, both models, billing test-mode lifecycle and controlled Gmail delivery through the deployed URLs. Source completion and green fixtures do not prove this stage.
+The generic `app-auth/connect` and `app-auth/session` routes already support registered-app identity without a personal-agent subscription check. Existing app charge requests create one-time Stripe payments for credits; those payments do not implement recurring SaaS app subscriptions. The Cloud billing task is implementing the generic recurring subscription and delegation contracts.
 
-## Tests that decide whether it can ship
+Outreachr's existing `apps/cloud/src/billing.ts` persists checkout attempts and reconciles paid state under PostgreSQL locks. Adapt it to Cloud's generic subscription authority, retaining timeout recovery, tenant checks, and fail-closed reconciliation. Remove old product-specific paths, client headers, and token assumptions from `apps/cloud/src/eliza.ts`. Keep provider credentials out of browser bundles and store delegated grants encrypted at rest.
 
-- Billing works with Eliza billing unavailable. Assert that checkout, portal, reconciliation and webhooks never call Eliza's billing APIs.
-- A user with no paid Eliza personal-agent plan can sign in, start the Outreachr trial and buy Outreachr. Cancelling or changing Eliza does not alter Outreachr access; the reverse also holds.
-- Wrong merchant/app/workspace/customer/price/portal references fail. Separate app/Eliza subscription events cannot grant access. No personal Eliza subscriptions appear in Outreachr's portal.
-- Real Stripe SDK tests plus Stripe test-mode Checkout and portal: correct seat totals, pending payment, renewal, payment failure, cancellation at period end, plan/seat changes, retry recovery, duplicate/reordered webhooks and invalid signatures. The returned browser URL is not proof of payment.
-- Real PostgreSQL: one trial per verified identity, expiry boundaries, concurrent invite acceptance/seat capacity, last-owner protection, tenant isolation, durable subscription projections and restart behavior.
-- Auth/Google: exact app/redirect binding, code replay, expired/revoked credentials, explicit per-user mailbox selection, rejected cross-user/cross-app access, real consent and the existing approval/send-receipt/duplicate-send invariants.
-- Inference: both exact requested models execute using the operator's app credential and the workspace's allowance; an end user's unrelated Eliza balance or plan must not be the payer.
-- Final inspection of Eliza's active routes/services/config must show no Outreachr-specific code. Handle any already-applied migration history safely rather than rewriting a deployed schema blindly.
-- Browser/mobile, existing desktop regressions, full verification, hosted exact-head checks, production container startup, revision readback and actual provider results remain required.
+The already-merged product-specific Cloud bridge is temporary and must be replaced. Coordinate consumer adoption before removing its routes. The final Cloud source must contain no Outreachr-specific implementation, price names, environment bindings, or runtime schema dependencies. Handle applied database migration history safely; never rewrite a deployed migration without checking its state.
 
-## Source references
+## Implementation and release sequence
 
-- Stripe Billing for independent subscriptions: https://docs.stripe.com/billing/subscriptions/build-subscriptions
-- A SaaS business selling its own subscription does not need Connect: https://docs.stripe.com/connect/saas
-- Optional platform-managed merchant subscriptions: https://docs.stripe.com/connect/subscriptions
+1. Freeze the two draft Google onboarding PRs while the Cloud task settles the typed generic contract. Remove the unmerged direct-Stripe edits from Outreachr.
+2. Adopt app registration, scoped credentials, delegation, Google operations, and subscription APIs in Outreachr. Declare the app's plans using Cloud's built-in provisioning path. Verify which credential pays for inference.
+3. Update local billing projections and trial migration to match the authoritative contract. Preserve existing data, trial timestamps, in-flight checkout recovery, and duplicate-send protection.
+4. Exercise the consumer against the real generic handlers as well as controlled failure fixtures. Confirm that a second app and a personal Eliza subscription cannot affect Outreachr entitlements.
+5. Complete repository verification and terminal hosted checks for the final commit, merge reviewed changes, then deploy through the existing Cloud and app release gates.
+6. Verify the deployed app using actual login, managed Google consent, both models, Stripe test-mode lifecycle, and a controlled approved email. A healthy container or mocked browser test is only intermediate evidence.
 
-The normal CLI sign-in reached the final authorization page; creation of its persistent key is still awaiting user confirmation. A Stripe test key and an actual sender postal address remain live test prerequisites. No email or charge has been sent as evidence.
+## Acceptance tests
+
+- Independent subscription scopes: a customer with no paid Eliza personal-agent plan can sign in, start an Outreachr trial, and purchase Outreachr. Personal Eliza plan changes do not alter Outreachr access. Another registered app's customer, checkout, portal, price, event, or entitlement cannot cross scopes.
+- Cloud-managed billing: Outreachr sends requests only to the generic authenticated Cloud API. It never receives Stripe secret keys. Provider failures cannot create paid access or duplicate subscriptions. Display a recoverable billing error when Cloud cannot verify payment.
+- Subscription lifecycle: exact plan/seat totals, payment pending, renewal, payment failure, cancellation, period boundaries, plan and seat changes, timeout recovery, duplicate and reordered notifications. Reconcile current authoritative state instead of trusting browser redirects or old events.
+- Trial and tenancy: preserve exact migrated trial dates; reject repeat trials; isolate workspaces; serialize invitation acceptance and seat changes; protect the last owner; retain durable state across restarts.
+- Delegation and Google: app and redirect binding, code replay rejection, expiry/revocation, explicit capabilities, mailbox ownership, cross-app denial, actual consent, exact-content approval, send receipt, and duplicate-send rejection.
+- Inference: execute both exact plan models with the operator's app credential; meter the workspace allowance and hold ambiguous reservations. The end user's personal plan or credit balance is not the payer.
+- Delivery: desktop regressions, full HTTP/browser/mobile flow, actual Linux container startup with least-privilege PostgreSQL, final revision readback, and confirmed provider results.
+
+## Current live prerequisites
+
+App registration and inference credentials have not been provisioned. The normal CLI login reached its authorization screen, but creation of its persistent key still awaits confirmation. Cloud Stripe test-mode access and a real sender postal address remain prerequisites for the final billing and email exercises. No live charge or email has been made as test evidence.
