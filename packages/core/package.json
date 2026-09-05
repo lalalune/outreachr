@@ -31,13 +31,13 @@
   },
   "dependencies": {
     "sql.js": "1.14.2",
-    "zod": "4.4.3"
+    "zod": "4.5.1"
   },
   "devDependencies": {
-    "@types/node": "26.2.0",
+    "@types/node": "26.4.0",
     "@types/sql.js": "1.4.11",
     "@vitest/coverage-v8": "4.1.11",
-    "typescript": "5.9.3",
+    "typescript": "6.0.3",
     "vitest": "4.1.11"
   },
   "license": "Apache-2.0"
