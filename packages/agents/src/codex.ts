@@ -245,7 +245,10 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
       if (!status.authenticated)
         throw new AgentRuntimeError('AUTH_REQUIRED', 'Sign in to Codex before running the agent.');
       await this.#ensureInitialized();
-      const { config, serverName } = await this.#runConfiguration(mcp);
+      const { config, serverName, model } = await this.#runConfiguration(
+        mcp,
+        request.model ?? this.#defaultModel,
+      );
       if (active.cancelled) throw new AgentRuntimeError('CANCELLED', 'Codex run was cancelled.');
       let deltas = '';
       let finalText = '';
@@ -311,9 +314,7 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
         dynamicTools: [],
         selectedCapabilityRoots: [],
         config,
-        ...((request.model ?? this.#defaultModel)
-          ? { model: request.model ?? this.#defaultModel }
-          : {}),
+        model,
       });
       const threadId = thread.thread?.id;
       if (!threadId)
@@ -333,9 +334,7 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
           networkAccess: false,
         },
         outputSchema: AGENT_RESULT_JSON_SCHEMA,
-        ...((request.model ?? this.#defaultModel)
-          ? { model: request.model ?? this.#defaultModel }
-          : {}),
+        model,
       });
       active.turnId = turn.turn?.id;
       if (!active.turnId)
@@ -485,9 +484,69 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
     );
   }
 
-  async #runConfiguration(mcp: AgentMcpConnection | undefined): Promise<{
+  async #selectAvailableModel(
+    inheritedModel: unknown,
+    inheritedEffort: unknown,
+  ): Promise<{ model: string; reasoningEffort?: string }> {
+    let cursor: string | undefined;
+    const seen = new Set<string>();
+    let configured: Record<string, unknown> | undefined;
+    let recommended: Record<string, unknown> | undefined;
+    for (let page = 0; page < 10; page += 1) {
+      const response = await this.#rpc.request<unknown>('model/list', {
+        limit: 100,
+        includeHidden: false,
+        ...(cursor ? { cursor } : {}),
+      });
+      if (!isRecord(response) || !Array.isArray(response.data))
+        throw new AgentRuntimeError('PROTOCOL_ERROR', 'Codex model catalog could not be read.');
+      for (const entry of response.data) {
+        if (!isRecord(entry) || typeof entry.model !== 'string' || !entry.model.trim())
+          throw new AgentRuntimeError('PROTOCOL_ERROR', 'Codex model catalog is invalid.');
+        if (entry.hidden === true) continue;
+        if (entry.model === inheritedModel) configured = entry;
+        if (entry.isDefault === true) recommended ??= entry;
+      }
+      if (response.nextCursor === null || response.nextCursor === undefined) {
+        const selected = configured ?? recommended;
+        if (!selected)
+          throw new AgentRuntimeError(
+            'PROTOCOL_ERROR',
+            'Codex did not report a supported default model.',
+          );
+        const supported = Array.isArray(selected.supportedReasoningEfforts)
+          ? selected.supportedReasoningEfforts
+          : [];
+        const effort =
+          configured &&
+          typeof inheritedEffort === 'string' &&
+          supported.some((entry) => isRecord(entry) && entry.reasoningEffort === inheritedEffort)
+            ? inheritedEffort
+            : selected.defaultReasoningEffort;
+        return {
+          model: selected.model as string,
+          ...(typeof effort === 'string' && effort ? { reasoningEffort: effort } : {}),
+        };
+      }
+      if (
+        typeof response.nextCursor !== 'string' ||
+        !response.nextCursor ||
+        seen.has(response.nextCursor)
+      )
+        throw new AgentRuntimeError('PROTOCOL_ERROR', 'Codex model pagination is invalid.');
+      seen.add(response.nextCursor);
+      cursor = response.nextCursor;
+    }
+    throw new AgentRuntimeError('PROTOCOL_ERROR', 'Codex model catalog exceeded its page limit.');
+  }
+
+  async #runConfiguration(
+    mcp: AgentMcpConnection | undefined,
+    explicitModel: string | undefined,
+  ): Promise<{
     config: Record<string, unknown>;
     serverName: string;
+    model: string;
   }> {
     const response = await this.#rpc.request<unknown>('config/read', {
       includeLayers: false,
@@ -521,9 +580,16 @@ export class CodexAgentAdapter implements AgentProviderAdapter {
     do {
       serverName = `outreachr_${randomBytes(8).toString('hex')}`;
     } while (Object.hasOwn(servers, serverName));
+    const selection = explicitModel
+      ? { model: explicitModel }
+      : await this.#selectAvailableModel(effective.model, effective.model_reasoning_effort);
     return {
       serverName,
+      model: selection.model,
       config: {
+        ...('reasoningEffort' in selection
+          ? { model_reasoning_effort: selection.reasoningEffort }
+          : {}),
         web_search: 'disabled',
         features: {
           apps: false,

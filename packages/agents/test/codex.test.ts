@@ -16,6 +16,7 @@ class FakeRpc implements CodexRpcClient {
   readonly listeners = new Set<RpcNotificationListener>();
   closed = false;
   inventoryOverride: unknown = undefined;
+  modelsOverride: unknown = undefined;
   effectiveConfig: unknown = {
     mcp_servers: {
       outreachr: { command: 'private-stdio-command', env: { TOKEN: 'private-inherited-token' } },
@@ -29,6 +30,17 @@ class FakeRpc implements CodexRpcClient {
   async request<T>(method: string, params?: unknown): Promise<T> {
     this.requests.push({ method, params });
     if (method === 'config/read') return { config: this.effectiveConfig } as T;
+    if (method === 'model/list') {
+      if (typeof this.modelsOverride === 'function') return this.modelsOverride(params) as T;
+      return (
+        this.modelsOverride !== undefined
+          ? this.modelsOverride
+          : {
+              data: [{ model: 'catalog-default', isDefault: true, defaultReasoningEffort: 'low' }],
+              nextCursor: null,
+            }
+      ) as T;
+    }
     if (method === 'mcpServerStatus/list') {
       if (typeof this.inventoryOverride === 'function') return this.inventoryOverride(params) as T;
       if (this.inventoryOverride !== undefined) return this.inventoryOverride as T;
@@ -112,6 +124,125 @@ function emitSuccessfulTurn(rpc: FakeRpc): void {
 }
 
 describe('CodexAgentAdapter', () => {
+  it.each([
+    ['unavailable-newer-model', 'ultra', 'catalog-default', 'low'],
+    ['supported-model', 'high', 'supported-model', 'high'],
+    ['supported-model', 'unsupported-effort', 'supported-model', 'medium'],
+  ])(
+    'selects an available model and supported reasoning effort for inherited %s',
+    async (inheritedModel, inheritedEffort, model, effort) => {
+      const rpc = authenticatedRpc();
+      rpc.effectiveConfig = { model: inheritedModel, model_reasoning_effort: inheritedEffort };
+      rpc.modelsOverride = {
+        data: [
+          { model: 'catalog-default', isDefault: true, defaultReasoningEffort: 'low' },
+          {
+            model: 'supported-model',
+            isDefault: false,
+            defaultReasoningEffort: 'medium',
+            supportedReasoningEfforts: [{ reasoningEffort: 'high' }],
+          },
+        ],
+        nextCursor: null,
+      };
+      rpc.handler = (method) => {
+        if (method === 'account/read') return { account: { type: 'chatgpt' } };
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') {
+          setImmediate(() => emitSuccessfulTurn(rpc));
+          return { turn: { id: 'turn-1' } };
+        }
+        return {};
+      };
+      const adapter = new CodexAgentAdapter({
+        workspaceDirectory: resolvedWorkspaceDirectory,
+        rpc,
+        commandRunner: installed,
+      });
+      await adapter.run('model-selection', runRequest(), vi.fn());
+      expect(rpc.requests.find(({ method }) => method === 'thread/start')?.params).toMatchObject({
+        model,
+        config: { model_reasoning_effort: effort },
+      });
+      expect(rpc.requests.find(({ method }) => method === 'turn/start')?.params).toMatchObject({
+        model,
+      });
+      expect(rpc.requests.some(({ method }) => method === 'config/value/write')).toBe(false);
+    },
+  );
+
+  it('finds a supported configured model on a later catalog page', async () => {
+    const rpc = authenticatedRpc();
+    rpc.effectiveConfig = { model: 'later-model' };
+    rpc.modelsOverride = (params: { cursor?: string }) =>
+      params.cursor
+        ? { data: [{ model: 'later-model', isDefault: false }], nextCursor: null }
+        : {
+            data: [{ model: 'catalog-default', isDefault: true }],
+            nextCursor: 'next-models',
+          };
+    rpc.handler = (method) => {
+      if (method === 'account/read') return { account: { type: 'chatgpt' } };
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') {
+        setImmediate(() => emitSuccessfulTurn(rpc));
+        return { turn: { id: 'turn-1' } };
+      }
+      return {};
+    };
+    const adapter = new CodexAgentAdapter({
+      workspaceDirectory: resolvedWorkspaceDirectory,
+      rpc,
+      commandRunner: installed,
+    });
+    await adapter.run('model-pages', runRequest(), vi.fn());
+    expect(rpc.requests.filter(({ method }) => method === 'model/list')).toHaveLength(2);
+    expect(rpc.requests.find(({ method }) => method === 'thread/start')?.params).toMatchObject({
+      model: 'later-model',
+    });
+  });
+
+  it.each([
+    [null, 'could not be read'],
+    [{ data: [null] }, 'catalog is invalid'],
+    [{ data: [] }, 'supported default model'],
+    [
+      { data: [{ model: 'hidden-default', isDefault: true, hidden: true }] },
+      'supported default model',
+    ],
+    [{ data: [], nextCursor: 7 }, 'pagination is invalid'],
+    [{ data: [], nextCursor: 'repeated' }, 'pagination is invalid'],
+  ])(
+    'rejects an unreadable or unusable model catalog before creating a thread',
+    async (models, message) => {
+      const rpc = authenticatedRpc();
+      rpc.modelsOverride = models;
+      const adapter = new CodexAgentAdapter({
+        workspaceDirectory: resolvedWorkspaceDirectory,
+        rpc,
+        commandRunner: installed,
+      });
+      await expect(adapter.run('invalid-models', runRequest(), vi.fn())).rejects.toThrow(message);
+      expect(rpc.requests.some(({ method }) => method === 'thread/start')).toBe(false);
+    },
+  );
+
+  it('bounds model catalog pagination', async () => {
+    const rpc = authenticatedRpc();
+    let page = 0;
+    rpc.modelsOverride = () => ({ data: [], nextCursor: `page-${++page}` });
+    const adapter = new CodexAgentAdapter({
+      workspaceDirectory: resolvedWorkspaceDirectory,
+      rpc,
+      commandRunner: installed,
+    });
+    await expect(adapter.run('too-many-models', runRequest(), vi.fn())).rejects.toThrow(
+      'page limit',
+    );
+    expect(page).toBe(10);
+    expect(rpc.requests.some(({ method }) => method === 'thread/start')).toBe(false);
+  });
+
   it('fails before creating a thread if effective configuration cannot be inspected', async () => {
     const rpc = authenticatedRpc();
     rpc.effectiveConfig = null;
@@ -371,6 +502,7 @@ describe('CodexAgentAdapter', () => {
       },
     });
     expect(JSON.stringify(turn)).toContain('PROPOSAL-ONLY');
+    expect(rpc.requests.some(({ method }) => method === 'model/list')).toBe(false);
   });
 
   it('injects only the loopback Outreachr MCP and permits only its exact allowlisted tools', async () => {
