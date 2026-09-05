@@ -45,6 +45,9 @@ const builderArgs = [
   '--publish',
   'never',
 ];
+// Verification packages still run every resource, signature and launch check.
+// Maximum compression adds substantial CPU time for bundled agent executables.
+if (unsigned) builderArgs.push('--config.compression=normal');
 if (release && process.platform === 'darwin') builderArgs.push('--config.mac.notarize=true');
 if (unsigned && process.platform === 'darwin') {
   builderArgs.push(
