@@ -9,11 +9,13 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
+import { z } from 'zod';
 import type { FounderSetupInput, RoundState } from '../../../shared/contracts';
 import { Badge, Button, TextField } from '../components/ui';
 import { useWorkspace } from '../state/WorkspaceContext';
 
 const steps = ['Founder', 'Company', 'Round', 'Privacy', 'Ready'] as const;
+const founderEmailSchema = z.string().email();
 
 export function OnboardingFlow(): React.JSX.Element {
   const { data, command, notify } = useWorkspace();
@@ -37,7 +39,10 @@ export function OnboardingFlow(): React.JSX.Element {
 
   const valid = useMemo(() => {
     if (step === 0)
-      return form.founderName.trim().length > 1 && /.+@.+\..+/.test(form.founderEmail);
+      return (
+        form.founderName.trim().length > 1 &&
+        founderEmailSchema.safeParse(form.founderEmail).success
+      );
     if (step === 1)
       return form.companyName.trim().length > 1 && form.companyOneLiner.trim().length > 8;
     if (step === 2)
@@ -131,6 +136,9 @@ export function OnboardingFlow(): React.JSX.Element {
                 <TextField
                   label="Work email"
                   type="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   value={form.founderEmail}
                   onChange={(event) => update('founderEmail', event.target.value)}
                   hint="Used as the default sender identity after you connect a provider."

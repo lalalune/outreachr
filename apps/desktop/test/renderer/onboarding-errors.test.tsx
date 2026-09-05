@@ -39,3 +39,22 @@ it('shows setup failures before the app shell exists and lets the founder retry 
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
   expect(command.mock.calls[1]).toEqual(command.mock.calls[0]);
 });
+
+it.each(['founder@@example.test', 'founder@example.test.', 'founder@.example.test'])(
+  'keeps the founder step open for an email the command boundary rejects: %s',
+  (email) => {
+    installBridge({ ...bootstrapFixture(), isFirstRun: true });
+    render(
+      <WorkspaceProvider>
+        <OnboardingFlow />
+      </WorkspaceProvider>,
+    );
+    fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Test Founder' } });
+    fireEvent.change(screen.getByLabelText('Work email'), { target: { value: email } });
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Work email'), {
+      target: { value: 'founder@example.test' },
+    });
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
+  },
+);
