@@ -2,7 +2,8 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './test',
   workers: 1,
-  timeout: 120_000,
+  // This complete flow includes two browsers and real PostgreSQL-backed CRM operations.
+  timeout: 300_000,
   expect: { timeout: 20_000 },
   use: {
     baseURL: 'http://127.0.0.1:4173',

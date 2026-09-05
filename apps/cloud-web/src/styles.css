@@ -1,9 +1,15 @@
+html,
+body,
+#root {
+  min-width: 0;
+}
 .cloud-root {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
-.cloud-root > .app-shell {
+.cloud-root > .app-shell,
+.cloud-root > .onboarding-shell {
   flex: 1;
   min-height: 0;
   height: auto;
@@ -172,6 +178,27 @@
   line-height: 1.6;
 }
 @media (max-width: 700px) {
+  .cloud-root .onboarding-shell,
+  .cloud-root .form-grid--two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cloud-root .onboarding-aside {
+    display: none;
+  }
+  .cloud-root .onboarding-main {
+    padding: 24px;
+  }
+  .cloud-root .page {
+    padding: 16px;
+  }
+  .cloud-org-label {
+    max-width: 100%;
+    min-width: 0;
+  }
+  .cloud-org-label select {
+    min-width: 0;
+    max-width: 100%;
+  }
   .cloud-bar {
     gap: 8px;
     padding: 8px;

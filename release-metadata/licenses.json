@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageCount": 671,
+  "packageCount": 670,
   "packages": [
     {
       "name": "@adobe/css-tools",
@@ -4961,14 +4961,6 @@
     {
       "name": "undici",
       "version": "6.28.0",
-      "license": "MIT",
-      "homepage": "https://undici.nodejs.org",
-      "repository": "git+https://github.com/nodejs/undici.git",
-      "licenseTextSha256": ["fe64958bfaef10b1c9628b4ee9f1c48170b0219bd4b2a7ef4a0c41aebd920c9e"]
-    },
-    {
-      "name": "undici",
-      "version": "7.28.0",
       "license": "MIT",
       "homepage": "https://undici.nodejs.org",
       "repository": "git+https://github.com/nodejs/undici.git",

@@ -4,14 +4,26 @@ import AxeBuilder from '@axe-core/playwright';
 test('signs in, persists Shaw fixture contact and draft, runs a proposal, exports, and invites a viewer', async ({
   page,
   browser,
-}) => {
+}, testInfo) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Keep your fundraising moving.' })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: testInfo.outputPath('mobile-landing.jpg'),
+    fullPage: true,
+    animations: 'disabled',
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
   await page.getByRole('link', { name: 'Continue with Eliza' }).click();
   await page.getByRole('link', { name: 'Sign in as Owner' }).click();
   await expect(page.getByRole('heading', { name: 'Who is running this round?' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
   await page.getByLabel('Your name').fill('Shaw Fixture');
   await page.getByLabel('Work email').fill('owner@example.test');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
@@ -29,6 +41,7 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
     .fill('123 Fixture Street, Test City, NY 10001');
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await page.getByRole('button', { name: 'Create workspace', exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 1000 });
   const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
   await navigation.getByRole('link', { name: 'Investors', exact: true }).click();
   await page.getByRole('button', { name: 'Add investor', exact: true }).click();
@@ -80,6 +93,7 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
   await expect(
     viewer.getByRole('button', { name: 'Review subscription', exact: true }),
   ).toBeDisabled();
+  await viewerContext.close();
   const serious = (await new AxeBuilder({ page }).analyze()).violations.filter((violation) =>
     ['serious', 'critical'].includes(violation.impact ?? ''),
   );
@@ -90,5 +104,22 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
     })),
   ).toEqual([]);
   expect(errors).toEqual([]);
-  await viewerContext.close();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    page.getByRole('heading', { name: 'Workspace settings', exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole('heading', { name: 'Workspace settings', exact: true })
+    .scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: testInfo.outputPath('mobile-settings.jpg'),
+    fullPage: true,
+    animations: 'disabled',
+  });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await navigation.getByRole('link', { name: 'Investors', exact: true }).click();
+  await expect(page.getByRole('searchbox', { name: 'Search firms' })).toBeVisible();
+  expect(errors).toEqual([]);
 });

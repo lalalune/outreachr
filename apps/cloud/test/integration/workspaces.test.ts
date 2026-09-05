@@ -325,6 +325,32 @@ describe('HTTP login and workspace boundary', () => {
       'Content-Type': 'application/json',
       'X-Outreachr-Request': '1',
     };
+    const inviter = identity();
+    const invitedOrg = (await store.signIn(inviter)).organizations[0]!;
+    const staleEmailInvite = await store.invite(inviter.id, invitedOrg.id, account.email, 'viewer');
+    elizaPrincipal.email = `${randomUUID()}@example.test`;
+    const staleAcceptance = await app.request('/api/invites/accept', {
+      method: 'POST',
+      headers: mutationHeaders,
+      body: JSON.stringify({ token: staleEmailInvite.token }),
+    });
+    expect(staleAcceptance.status).toBe(403);
+    expect((await staleAcceptance.json()).code).toBe('invite_email_mismatch');
+    const currentEmailInvite = await store.invite(
+      inviter.id,
+      invitedOrg.id,
+      elizaPrincipal.email,
+      'viewer',
+    );
+    expect(
+      (
+        await app.request('/api/invites/accept', {
+          method: 'POST',
+          headers: mutationHeaders,
+          body: JSON.stringify({ token: currentEmailInvite.token }),
+        })
+      ).status,
+    ).toBe(200);
     expect(
       (
         await app.request('/api/organizations', {
@@ -398,6 +424,8 @@ describe('cloud CRM and file transport', () => {
       expiresAt: new Date(Date.now() + 600_000),
     };
     let completions = 0;
+    let inferenceMode: 'success' | 'disconnect' | 'cancel' = 'success';
+    let providerStarted = () => {};
     const inference = new InferenceClient(
       'https://fixture.eliza.test',
       'fixture-key-not-real',
@@ -417,6 +445,16 @@ describe('cloud CRM and file transport', () => {
         expect(input.messages[1].content).not.toContain(user.email);
         expect(input.tools).toBeUndefined();
         completions++;
+        if (inferenceMode === 'disconnect')
+          throw new Error('Provider disconnected after accepting the request');
+        if (inferenceMode === 'cancel') {
+          providerStarted();
+          return await new Promise<Response>((_resolve, reject) => {
+            const signal = init!.signal!;
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+            if (signal.aborted) reject(signal.reason);
+          });
+        }
         return Response.json({
           model: input.model,
           choices: [
@@ -523,6 +561,56 @@ describe('cloud CRM and file transport', () => {
     expect(charged).toEqual([
       { status: 'completed', model: 'openai/gpt-5.6-sol', settled_cents: 1 },
     ]);
+    inferenceMode = 'disconnect';
+    const failedEvents: AgentEvent[] = [];
+    await runtime().execute(
+      session,
+      user,
+      org.id,
+      'agent.run',
+      { provider: 'codex', prompt: 'Connection failure fixture.', disclosedContextIds: [] },
+      (event) => failedEvents.push(event),
+    );
+    expect(failedEvents.map((event) => event.type)).toEqual(['started', 'error']);
+    inferenceMode = 'cancel';
+    const pending = new Promise<void>((resolve) => {
+      providerStarted = resolve;
+    });
+    let cancelledRunId = '';
+    const cancelledEvents: AgentEvent[] = [];
+    const active = runtime().execute(
+      session,
+      user,
+      org.id,
+      'agent.run',
+      { provider: 'codex', prompt: 'Cancellation fixture.', disclosedContextIds: [] },
+      (event) => {
+        cancelledRunId = event.runId;
+        cancelledEvents.push(event);
+      },
+    );
+    await pending;
+    expect(runs.cancel(cancelledRunId, randomUUID(), org.id)).toEqual({ cancelled: false });
+    expect(runs.cancel(cancelledRunId, user.id, randomUUID())).toEqual({ cancelled: false });
+    expect(runs.cancel(cancelledRunId, user.id, org.id)).toEqual({ cancelled: true });
+    await active;
+    expect(cancelledEvents.map((event) => event.type)).toEqual(['started', 'error']);
+    expect(runs.cancel(cancelledRunId, user.id, org.id)).toEqual({ cancelled: false });
+    expect(completions).toBe(3);
+    const uncertain = (
+      await pool.query(
+        "SELECT status,settled_cents,reserved_cents FROM outreachr.usage WHERE org_id=$1 AND status='ambiguous'",
+        [org.id],
+      )
+    ).rows;
+    expect(uncertain).toHaveLength(2);
+    for (const item of uncertain) {
+      expect(item.settled_cents).toBeNull();
+      expect(item.reserved_cents).toBeGreaterThan(0);
+    }
+    expect((await runtime().bootstrap(session, user, org.id)).agentProposals).toHaveLength(
+      final.agentProposals.length,
+    );
   }, 120_000);
 });
 

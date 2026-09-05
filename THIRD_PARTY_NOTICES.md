@@ -623,7 +623,6 @@ Outreachr is built with the following installed build and runtime dependencies. 
 | typescript                                  | 6.0.3                | Apache-2.0                | https://www.typescriptlang.org/                                                                      |
 | typescript-eslint                           | 8.68.0               | MIT                       | https://typescript-eslint.io/packages/typescript-eslint                                              |
 | undici                                      | 6.28.0               | MIT                       | https://undici.nodejs.org                                                                            |
-| undici                                      | 7.28.0               | MIT                       | https://undici.nodejs.org                                                                            |
 | undici                                      | 7.29.0               | MIT                       | https://undici.nodejs.org                                                                            |
 | undici                                      | 8.9.0                | MIT                       | https://undici.nodejs.org                                                                            |
 | undici-types                                | 7.18.2               | MIT                       | https://undici.nodejs.org                                                                            |
@@ -19748,7 +19747,7 @@ SOFTWARE.
 
 ### fe64958bfaef10b1c9628b4ee9f1c48170b0219bd4b2a7ef4a0c41aebd920c9e
 
-Applies to: undici-types@7.18.2, undici-types@8.3.0, undici@6.28.0, undici@7.28.0, undici@7.29.0, undici@8.9.0
+Applies to: undici-types@7.18.2, undici-types@8.3.0, undici@6.28.0, undici@7.29.0, undici@8.9.0
 
 ```text
 MIT License
