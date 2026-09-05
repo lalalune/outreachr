@@ -103,3 +103,22 @@ Outreachr runs bundled local Codex and Claude agent sidecars. Codex uses the off
 ## Local deletion
 
 Settings → Privacy & security offers a typed-confirmation reset. The app writes a narrow reset marker, restarts, deletes only its exact SQLite vault, and creates a fresh seeded workspace. Create an encrypted backup first if the data may be needed.
+
+## Add your own investor contacts
+
+Open an investor and select **Add person**. Enter their full name, optional title, and work or individual email. Contacts start private and are excluded from public contributions. After saving, use **Edit contacts** to make changes or **Draft** to prepare outreach. Existing suppression and prior-contact history still apply. The app rejects a duplicate name within a firm or an email already assigned to another person; edit the existing person to preserve their history.
+
+## Import an investor spreadsheet
+
+Save your spreadsheet as UTF-8 CSV, then open **Investors → Import CSV**. Review the preview before selecting **Import reviewed rows**. Cancel leaves the vault unchanged. Files are limited to 5 MiB and 2,000 data rows.
+
+The required column is `name` (firm or investor name). Optional columns are `type`, `website`, `headquarters`, `description`, `person_name`, `title`, `work_email`, and `individual_email`. `firm_name`, `contact_name`, and `email` are accepted aliases. A person name is required when supplying a title or email. Websites must be complete HTTPS URLs. Type defaults to `venture_capital`; other supported values match the Add investor form, using underscores, such as `micro_vc`, `angel`, and `family_office`.
+
+```csv
+name,type,website,person_name,title,work_email
+Example Capital,angel,https://example.com,Ada Partner,Partner,ada@example.com
+```
+
+Quoted commas, doubled quotes, and quoted multiline cells are supported. The preview lists invalid rows and ignored columns. Fix invalid rows and choose the file again; the app imports no rows until the entire file is valid. New records are marked as imports, private, and ineligible for public contributions. A source URL or a rights/public flag in a spreadsheet never grants redistribution rights.
+
+Existing firms keep their metadata. New people can be added to an existing firm; existing people are skipped when their contact details match. Conflicting names or email ownership must be resolved through Edit contacts. Reimporting the same records creates no duplicates. If the file changes after preview, the app requires a fresh preview. Imports create research records; they do not add round targets, approve drafts, or send messages.

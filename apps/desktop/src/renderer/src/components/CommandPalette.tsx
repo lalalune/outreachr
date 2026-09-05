@@ -78,7 +78,12 @@ export function CommandPalette({
       </div>
       {query.trim().length < 2 ? (
         <div className="palette-shortcuts">
-          <button onClick={() => navigate('/agent')}>
+          <button
+            onClick={() => {
+              navigate('/agent');
+              onClose();
+            }}
+          >
             <Bot aria-hidden="true" />
             <span>
               <strong>Ask the agent</strong>
@@ -86,7 +91,12 @@ export function CommandPalette({
             </span>
             <ArrowRight aria-hidden="true" />
           </button>
-          <button onClick={() => navigate('/investors')}>
+          <button
+            onClick={() => {
+              navigate('/investors');
+              onClose();
+            }}
+          >
             <Search aria-hidden="true" />
             <span>
               <strong>Browse the investor universe</strong>

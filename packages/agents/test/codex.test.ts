@@ -15,10 +15,50 @@ class FakeRpc implements CodexRpcClient {
   readonly requests: Array<{ method: string; params: unknown }> = [];
   readonly listeners = new Set<RpcNotificationListener>();
   closed = false;
+  inventoryOverride: unknown = undefined;
+  modelsOverride: unknown = undefined;
+  effectiveConfig: unknown = {
+    mcp_servers: {
+      outreachr: { command: 'private-stdio-command', env: { TOKEN: 'private-inherited-token' } },
+      unrelated: { url: 'https://unrelated.test' },
+    },
+    apps: { example: { enabled: true } },
+    plugins: { example: { enabled: true } },
+  };
   handler: (method: string, params: unknown) => unknown = () => ({});
 
   async request<T>(method: string, params?: unknown): Promise<T> {
     this.requests.push({ method, params });
+    if (method === 'config/read') return { config: this.effectiveConfig } as T;
+    if (method === 'model/list') {
+      if (typeof this.modelsOverride === 'function') return this.modelsOverride(params) as T;
+      return (
+        this.modelsOverride !== undefined
+          ? this.modelsOverride
+          : {
+              data: [{ model: 'catalog-default', isDefault: true, defaultReasoningEffort: 'low' }],
+              nextCursor: null,
+            }
+      ) as T;
+    }
+    if (method === 'mcpServerStatus/list') {
+      if (typeof this.inventoryOverride === 'function') return this.inventoryOverride(params) as T;
+      if (this.inventoryOverride !== undefined) return this.inventoryOverride as T;
+      const thread = this.requests.find(({ method: name }) => name === 'thread/start')?.params as {
+        config: { mcp_servers: Record<string, { enabled?: boolean; enabled_tools?: string[] }> };
+      };
+      return {
+        data: Object.entries(thread.config.mcp_servers)
+          .filter(([, server]) => server.enabled === true)
+          .map(([name, server]) => ({
+            name,
+            tools: Object.fromEntries(
+              (server.enabled_tools ?? []).map((tool) => [tool, { name: tool }]),
+            ),
+          })),
+        nextCursor: null,
+      } as T;
+    }
     return (await this.handler(method, params)) as T;
   }
 
@@ -61,6 +101,15 @@ function authenticatedRpc(): FakeRpc {
   return rpc;
 }
 
+function activeServerName(rpc: FakeRpc): string {
+  const thread = rpc.requests.find(({ method }) => method === 'thread/start')?.params as {
+    config: { mcp_servers: Record<string, { enabled?: boolean }> };
+  };
+  return Object.entries(thread.config.mcp_servers).find(
+    ([, server]) => server.enabled === true,
+  )![0];
+}
+
 function emitSuccessfulTurn(rpc: FakeRpc): void {
   const json = JSON.stringify(validRawResult);
   rpc.emit({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', delta: json } });
@@ -75,6 +124,241 @@ function emitSuccessfulTurn(rpc: FakeRpc): void {
 }
 
 describe('CodexAgentAdapter', () => {
+  it.each([
+    ['unavailable-newer-model', 'ultra', 'catalog-default', 'low'],
+    ['supported-model', 'high', 'supported-model', 'high'],
+    ['supported-model', 'unsupported-effort', 'supported-model', 'medium'],
+  ])(
+    'selects an available model and supported reasoning effort for inherited %s',
+    async (inheritedModel, inheritedEffort, model, effort) => {
+      const rpc = authenticatedRpc();
+      rpc.effectiveConfig = { model: inheritedModel, model_reasoning_effort: inheritedEffort };
+      rpc.modelsOverride = {
+        data: [
+          { model: 'catalog-default', isDefault: true, defaultReasoningEffort: 'low' },
+          {
+            model: 'supported-model',
+            isDefault: false,
+            defaultReasoningEffort: 'medium',
+            supportedReasoningEfforts: [{ reasoningEffort: 'high' }],
+          },
+        ],
+        nextCursor: null,
+      };
+      rpc.handler = (method) => {
+        if (method === 'account/read') return { account: { type: 'chatgpt' } };
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        if (method === 'turn/start') {
+          setImmediate(() => emitSuccessfulTurn(rpc));
+          return { turn: { id: 'turn-1' } };
+        }
+        return {};
+      };
+      const adapter = new CodexAgentAdapter({
+        workspaceDirectory: resolvedWorkspaceDirectory,
+        rpc,
+        commandRunner: installed,
+      });
+      await adapter.run('model-selection', runRequest(), vi.fn());
+      expect(rpc.requests.find(({ method }) => method === 'thread/start')?.params).toMatchObject({
+        model,
+        config: { model_reasoning_effort: effort },
+      });
+      expect(rpc.requests.find(({ method }) => method === 'turn/start')?.params).toMatchObject({
+        model,
+      });
+      expect(rpc.requests.some(({ method }) => method === 'config/value/write')).toBe(false);
+    },
+  );
+
+  it('finds a supported configured model on a later catalog page', async () => {
+    const rpc = authenticatedRpc();
+    rpc.effectiveConfig = { model: 'later-model' };
+    rpc.modelsOverride = (params: { cursor?: string }) =>
+      params.cursor
+        ? { data: [{ model: 'later-model', isDefault: false }], nextCursor: null }
+        : {
+            data: [{ model: 'catalog-default', isDefault: true }],
+            nextCursor: 'next-models',
+          };
+    rpc.handler = (method) => {
+      if (method === 'account/read') return { account: { type: 'chatgpt' } };
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      if (method === 'turn/start') {
+        setImmediate(() => emitSuccessfulTurn(rpc));
+        return { turn: { id: 'turn-1' } };
+      }
+      return {};
+    };
+    const adapter = new CodexAgentAdapter({
+      workspaceDirectory: resolvedWorkspaceDirectory,
+      rpc,
+      commandRunner: installed,
+    });
+    await adapter.run('model-pages', runRequest(), vi.fn());
+    expect(rpc.requests.filter(({ method }) => method === 'model/list')).toHaveLength(2);
+    expect(rpc.requests.find(({ method }) => method === 'thread/start')?.params).toMatchObject({
+      model: 'later-model',
+    });
+  });
+
+  it.each([
+    [null, 'could not be read'],
+    [{ data: [null] }, 'catalog is invalid'],
+    [{ data: [] }, 'supported default model'],
+    [
+      { data: [{ model: 'hidden-default', isDefault: true, hidden: true }] },
+      'supported default model',
+    ],
+    [{ data: [], nextCursor: 7 }, 'pagination is invalid'],
+    [{ data: [], nextCursor: 'repeated' }, 'pagination is invalid'],
+  ])(
+    'rejects an unreadable or unusable model catalog before creating a thread',
+    async (models, message) => {
+      const rpc = authenticatedRpc();
+      rpc.modelsOverride = models;
+      const adapter = new CodexAgentAdapter({
+        workspaceDirectory: resolvedWorkspaceDirectory,
+        rpc,
+        commandRunner: installed,
+      });
+      await expect(adapter.run('invalid-models', runRequest(), vi.fn())).rejects.toThrow(message);
+      expect(rpc.requests.some(({ method }) => method === 'thread/start')).toBe(false);
+    },
+  );
+
+  it('bounds model catalog pagination', async () => {
+    const rpc = authenticatedRpc();
+    let page = 0;
+    rpc.modelsOverride = () => ({ data: [], nextCursor: `page-${++page}` });
+    const adapter = new CodexAgentAdapter({
+      workspaceDirectory: resolvedWorkspaceDirectory,
+      rpc,
+      commandRunner: installed,
+    });
+    await expect(adapter.run('too-many-models', runRequest(), vi.fn())).rejects.toThrow(
+      'page limit',
+    );
+    expect(page).toBe(10);
+    expect(rpc.requests.some(({ method }) => method === 'thread/start')).toBe(false);
+  });
+
+  it('fails before creating a thread if effective configuration cannot be inspected', async () => {
+    const rpc = authenticatedRpc();
+    rpc.effectiveConfig = null;
+    const adapter = new CodexAgentAdapter({
+      workspaceDirectory: resolvedWorkspaceDirectory,
+      rpc,
+      commandRunner: installed,
+    });
+    await expect(adapter.run('invalid-config', runRequest(), vi.fn())).rejects.toThrow(
+      'configuration could not be inspected',
+    );
+    expect(rpc.requests.some(({ method }) => method === 'thread/start')).toBe(false);
+  });
+
+  it.each([
+    [null, 'could not be verified'],
+    [{ data: [null] }, 'inventory is invalid'],
+    [
+      { data: [{ name: 'unrelated', tools: { send: { name: 'send_email' } } }], nextCursor: null },
+      'inherited MCP server',
+    ],
+    [{ data: [], nextCursor: null }, 'did not initialize'],
+    [{ data: [], nextCursor: 1 }, 'pagination is invalid'],
+    [{ data: [], nextCursor: 'repeated' }, 'pagination is invalid'],
+  ])(
+    'fails before sending a prompt when the runtime tool inventory is unsafe',
+    async (inventory, message) => {
+      const rpc = authenticatedRpc();
+      rpc.inventoryOverride = inventory;
+      rpc.handler = (method) => {
+        if (method === 'account/read') return { account: { type: 'chatgpt' } };
+        if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+        return {};
+      };
+      const adapter = new CodexAgentAdapter({
+        workspaceDirectory: resolvedWorkspaceDirectory,
+        rpc,
+        commandRunner: installed,
+        mcpBearerToken: TEST_MCP_TOKEN,
+      });
+      await expect(
+        adapter.run(
+          'inventory-check',
+          { ...runRequest(), mcp: mcpConnection('inventory-check') },
+          vi.fn(),
+        ),
+      ).rejects.toThrow(message);
+      expect(rpc.requests.some(({ method }) => method === 'turn/start')).toBe(false);
+    },
+  );
+
+  it('checks every inventory page and rejects a substituted tool on the approved bridge', async () => {
+    const rpc = authenticatedRpc();
+    let page = 0;
+    rpc.inventoryOverride = () => {
+      page += 1;
+      if (page === 1) return { data: [{ name: 'disabled', tools: {} }], nextCursor: 'bridge' };
+      return {
+        data: [{ name: activeServerName(rpc), tools: { send: { name: 'send_email' } } }],
+        nextCursor: null,
+      };
+    };
+    rpc.handler = (method) => {
+      if (method === 'account/read') return { account: { type: 'chatgpt' } };
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      return {};
+    };
+    const adapter = new CodexAgentAdapter({
+      workspaceDirectory: resolvedWorkspaceDirectory,
+      rpc,
+      commandRunner: installed,
+      mcpBearerToken: TEST_MCP_TOKEN,
+    });
+    await expect(
+      adapter.run('paged', { ...runRequest(), mcp: mcpConnection('paged') }, vi.fn()),
+    ).rejects.toThrow('approved allowlist');
+    expect(page).toBe(2);
+    expect(rpc.requests.some(({ method }) => method === 'turn/start')).toBe(false);
+  });
+
+  it('bounds inventory pagination before sending any prompt', async () => {
+    const rpc = authenticatedRpc();
+    let page = 0;
+    rpc.inventoryOverride = () => ({ data: [], nextCursor: `page-${++page}` });
+    rpc.handler = (method) => {
+      if (method === 'account/read') return { account: { type: 'chatgpt' } };
+      if (method === 'thread/start') return { thread: { id: 'thread-1' } };
+      return {};
+    };
+    const adapter = new CodexAgentAdapter({
+      workspaceDirectory: resolvedWorkspaceDirectory,
+      rpc,
+      commandRunner: installed,
+    });
+    await expect(adapter.run('unbounded', runRequest(), vi.fn())).rejects.toThrow('page limit');
+    expect(page).toBe(10);
+    expect(rpc.requests.some(({ method }) => method === 'turn/start')).toBe(false);
+  });
+
+  it.each(['mcp_servers', 'apps', 'plugins'])(
+    'rejects malformed inherited %s configuration',
+    async (key) => {
+      const rpc = authenticatedRpc();
+      rpc.effectiveConfig = { [key]: 'invalid' };
+      const adapter = new CodexAgentAdapter({
+        workspaceDirectory: resolvedWorkspaceDirectory,
+        rpc,
+        commandRunner: installed,
+      });
+      await expect(adapter.run('invalid-table', runRequest(), vi.fn())).rejects.toThrow(
+        'configuration is invalid',
+      );
+      expect(rpc.requests.some(({ method }) => method === 'thread/start')).toBe(false);
+    },
+  );
+
   it('passes only the minimal auth, platform, and network environment to Codex', () => {
     expect(
       sanitizeCodexEnvironment({
@@ -218,6 +502,7 @@ describe('CodexAgentAdapter', () => {
       },
     });
     expect(JSON.stringify(turn)).toContain('PROPOSAL-ONLY');
+    expect(rpc.requests.some(({ method }) => method === 'model/list')).toBe(false);
   });
 
   it('injects only the loopback Outreachr MCP and permits only its exact allowlisted tools', async () => {
@@ -233,7 +518,7 @@ describe('CodexAgentAdapter', () => {
               threadId: 'thread-1',
               item: {
                 type: 'mcpToolCall',
-                server: 'outreachr',
+                server: activeServerName(rpc),
                 tool: 'outreachr_get_round',
               },
             },
@@ -269,9 +554,9 @@ describe('CodexAgentAdapter', () => {
       selectedCapabilityRoots: [],
       config: {
         web_search: 'disabled',
-        apps: {},
+        apps: { example: { enabled: false } },
         mcp_servers: {
-          outreachr: {
+          [activeServerName(rpc)]: {
             url: 'http://127.0.0.1:43123/mcp',
             bearer_token_env_var: 'OUTREACHR_MCP_TOKEN',
             http_headers: { 'X-Outreachr-Session': 'run-mcp' },
@@ -286,6 +571,26 @@ describe('CodexAgentAdapter', () => {
         },
       },
     });
+    expect(thread).toMatchObject({
+      config: {
+        mcp_servers: {
+          outreachr: { enabled: false, required: false },
+          unrelated: { enabled: false, required: false },
+        },
+        plugins: { example: { enabled: false } },
+        apps: { example: { enabled: false } },
+        features: {
+          apps: false,
+          plugins: false,
+          hooks: false,
+          shell_tool: false,
+          multi_agent: false,
+        },
+      },
+    });
+    expect(activeServerName(rpc)).toMatch(/^outreachr_[a-f0-9]{16}$/u);
+    expect(JSON.stringify(thread)).not.toContain('private-inherited-token');
+    expect(JSON.stringify(thread)).not.toContain('private-stdio-command');
     expect(JSON.stringify(thread)).not.toContain('outreachr_search_investors');
     expect(JSON.stringify(thread)).not.toContain('outreachr_propose_target');
 
@@ -301,7 +606,7 @@ describe('CodexAgentAdapter', () => {
               threadId: 'thread-1',
               item: {
                 type: 'mcpToolCall',
-                server: 'outreachr',
+                server: activeServerName(deniedRpc),
                 tool: 'outreachr_propose_target',
               },
             },

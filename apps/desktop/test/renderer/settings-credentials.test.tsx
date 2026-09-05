@@ -91,7 +91,10 @@ describe('credential setup guidance and renderer boundary', () => {
     expect(
       within(google).queryByPlaceholderText(/client secret|password/u),
     ).not.toBeInTheDocument();
-    expect(google.querySelector('input[type="password"]')).toBeNull();
+    expect(within(google).getByLabelText('Desktop client secret')).toHaveAttribute(
+      'type',
+      'password',
+    );
     fireEvent.change(clientId, {
       target: { value: '123456789.apps.googleusercontent.com' },
     });

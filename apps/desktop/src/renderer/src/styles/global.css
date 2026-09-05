@@ -1154,6 +1154,36 @@ kbd {
   overflow: hidden;
 }
 
+.csv-import-preview {
+  display: grid;
+  gap: 12px;
+}
+
+.csv-import-preview__table {
+  max-height: 360px;
+  overflow: auto;
+}
+
+.csv-import-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.csv-import-preview caption {
+  margin-bottom: 8px;
+  text-align: left;
+  color: var(--muted);
+}
+
+.csv-import-preview th,
+.csv-import-preview td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
 .dialog::backdrop {
   background: oklch(0.12 0.02 235 / 0.38);
   backdrop-filter: blur(2px);

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /* global window */
 import { spawn } from 'node:child_process';
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { _electron as electron } from '@playwright/test';
+import { openNodeVault } from '@outreachr/core/node';
 
 if (process.env.OUTREACHR_LIVE_CODEX_SMOKE !== '1') {
   throw new Error(
@@ -14,6 +15,10 @@ if (process.env.OUTREACHR_LIVE_CODEX_SMOKE !== '1') {
 }
 
 const desktopRoot = resolve(import.meta.dirname, '..');
+const withMcpProposal = process.argv.includes('--with-mcp-proposal');
+const smokePrompt = withMcpProposal
+  ? 'Use outreachr_propose_task exactly once to propose a task titled "Codex MCP smoke review" for founder review. Use no investor or person references, no due date, and no disclosed records or private fields. Do not call any other tools or apply the task. After the tool succeeds, return the exact summary "Codex subscription smoke passed" and an empty final proposals array.'
+  : 'Verify that this local Codex integration is operational. Return a concise summary containing the exact words "Codex subscription smoke passed" and no proposals. Do not call tools.';
 const packagedExecutable = process.env.OUTREACHR_PACKAGED_EXECUTABLE?.trim();
 if (packagedExecutable) await access(packagedExecutable);
 else {
@@ -27,9 +32,9 @@ let application;
 let packagedProcess;
 
 try {
+  let result;
   if (packagedExecutable) {
-    const result = await runPackagedSmoke(packagedExecutable, dataDirectory, logs);
-    console.log(JSON.stringify(result, null, 2));
+    result = await runPackagedSmoke(packagedExecutable, dataDirectory, logs);
   } else {
     application = await electron.launch({
       args: [desktopRoot, `--user-data-dir=${dataDirectory}`],
@@ -75,13 +80,14 @@ try {
         window.__outreachrLiveCodexEvents.push(event);
       });
     });
-    const { runId } = await page.evaluate(() =>
-      window.outreachr.command('agent.run', {
-        provider: 'codex',
-        prompt:
-          'Verify that this local Codex integration is operational. Return a concise summary containing the exact words "Codex subscription smoke passed" and no proposals. Do not call tools.',
-        disclosedContextIds: [],
-      }),
+    const { runId } = await page.evaluate(
+      (prompt) =>
+        window.outreachr.command('agent.run', {
+          provider: 'codex',
+          prompt,
+          disclosedContextIds: [],
+        }),
+      smokePrompt,
     );
 
     await page.waitForFunction(
@@ -99,8 +105,10 @@ try {
         (event) => event.runId === expectedRunId,
       );
     }, runId);
-    console.log(JSON.stringify(assertCompletion(detection, runId, events), null, 2));
+    result = assertCompletion(detection, runId, events);
   }
+  if (withMcpProposal) result.mcp = await assertPendingMcpProposal(dataDirectory, result.runId);
+  console.log(JSON.stringify(result, null, 2));
 } catch (error) {
   const detail = logs.join('').slice(-40_000);
   throw new Error(
@@ -196,7 +204,7 @@ function packagedSmokeExpression() {
     const stop = window.outreachr.onAgentEvent((event) => events.push(event));
     const { runId } = await window.outreachr.command('agent.run', {
       provider: 'codex',
-      prompt: 'Verify that this local Codex integration is operational. Return a concise summary containing the exact words "Codex subscription smoke passed" and no proposals. Do not call tools.',
+      prompt: ${JSON.stringify(smokePrompt)},
       disclosedContextIds: []
     });
     const deadline = Date.now() + 300000;
@@ -226,6 +234,41 @@ function assertCompletion(detection, runId, events) {
     eventTypes: events.map((event) => event.type),
     summary: terminal.text,
   };
+}
+
+async function assertPendingMcpProposal(directory, runId) {
+  // Inspect only the synthetic profile's persisted snapshot; never export or write it.
+  const vault = await openNodeVault({ bytes: await readFile(join(directory, 'outreachr.sqlite')) });
+  try {
+    const completedCalls = Number(
+      vault.scalar(
+        "SELECT COUNT(*) FROM audit_log WHERE actor_id=? AND action='mcp.tool_succeeded' AND json_extract(detail_json,'$.toolName')='outreachr_propose_task'",
+        [runId],
+      ),
+    );
+    const pendingProposals = Number(
+      vault.scalar(
+        "SELECT COUNT(*) FROM agent_proposals WHERE agent_run_id=? AND status='pending' AND proposal_type='task' AND json_extract(payload_json,'$.title')='Codex MCP smoke review'",
+        [runId],
+      ),
+    );
+    const appliedTasks = Number(
+      vault.scalar("SELECT COUNT(*) FROM tasks WHERE title='Codex MCP smoke review'"),
+    );
+    const sendReservations = Number(vault.scalar('SELECT COUNT(*) FROM send_ledger'));
+    if (
+      completedCalls !== 1 ||
+      pendingProposals !== 1 ||
+      appliedTasks !== 0 ||
+      sendReservations !== 0
+    )
+      throw new Error(
+        `MCP proposal boundary failed: ${JSON.stringify({ completedCalls, pendingProposals, appliedTasks, sendReservations })}`,
+      );
+    return { completedCalls, pendingProposals, appliedTasks, sendReservations };
+  } finally {
+    vault.close();
+  }
 }
 
 async function waitForPageTarget(port, timeout) {

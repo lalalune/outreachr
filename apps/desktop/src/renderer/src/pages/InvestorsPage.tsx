@@ -2,6 +2,7 @@ import { Download, Filter, Plus, SlidersHorizontal } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from '../lib/router';
 import { InvestorTable } from '../components/InvestorTable';
+import { InvestorCsvImportButton } from '../components/InvestorCsvImportButton';
 import type { InvestorKind } from '../../../shared/contracts';
 import {
   Badge,
@@ -199,6 +200,7 @@ export function InvestorsPage(): React.JSX.Element {
             >
               Export
             </Button>
+            <InvestorCsvImportButton />
             <Button
               tone="primary"
               icon={<Plus aria-hidden="true" />}

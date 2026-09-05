@@ -21,6 +21,76 @@ afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 describe('desktop OAuth and PKCE', () => {
+  it('sends a Google Desktop secret only in token exchange and refresh bodies', async () => {
+    const grants: string[] = [];
+    server.use(
+      http.post(tokenEndpoint('google'), async ({ request }) => {
+        const body = new URLSearchParams(await request.text());
+        expect(body.get('client_secret')).toBe('desktop-secret');
+        expect(request.url).not.toContain('desktop-secret');
+        grants.push(body.get('grant_type')!);
+        return HttpResponse.json({ access_token: 'access', token_type: 'Bearer' });
+      }),
+    );
+    await exchangeAuthorizationCode({
+      provider: 'google',
+      fetch,
+      clientId: 'client',
+      clientSecret: 'desktop-secret',
+      code: 'code',
+      codeVerifier: 'verifier',
+      redirectUri: 'http://127.0.0.1:49152/oauth/callback',
+    });
+    await refreshAccessToken({
+      provider: 'google',
+      fetch,
+      clientId: 'client',
+      clientSecret: 'desktop-secret',
+      refreshToken: 'refresh',
+    });
+    expect(grants).toEqual(['authorization_code', 'refresh_token']);
+    await expect(
+      refreshAccessToken({
+        provider: 'microsoft',
+        fetch,
+        clientId: 'client',
+        clientSecret: 'desktop-secret',
+        refreshToken: 'refresh',
+      }),
+    ).rejects.toThrow('Microsoft desktop clients');
+  });
+
+  it('never exposes token endpoint echoes of credentials in errors', async () => {
+    server.use(
+      http.post(tokenEndpoint('google'), () =>
+        HttpResponse.json(
+          {
+            error: 'invalid_client',
+            error_description: 'Rejected secret-private-value',
+            access_token: 'echoed-access-token',
+          },
+          { status: 400 },
+        ),
+      ),
+    );
+    try {
+      await refreshAccessToken({
+        provider: 'google',
+        fetch,
+        clientId: 'client',
+        clientSecret: 'secret-private-value',
+        refreshToken: 'refresh',
+      });
+      expect.unreachable('Token exchange should fail');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConnectorError);
+      expect(String(error)).not.toContain('secret-private-value');
+      expect(JSON.stringify(error)).not.toContain('secret-private-value');
+      expect(JSON.stringify(error)).not.toContain('echoed-access-token');
+      expect(error).toMatchObject({ providerCode: 'invalid_client' });
+    }
+  });
+
   it('creates RFC 7636 S256 material and loopback authorization URLs', async () => {
     const redirectUri = createLoopbackRedirectUri(48_231);
     const request = await prepareDesktopAuthorization({
@@ -172,7 +242,7 @@ describe('desktop OAuth and PKCE', () => {
     ).rejects.toMatchObject({
       code: 'INVALID_REQUEST',
       providerCode: 'invalid_grant',
-      message: 'Refresh token expired',
+      message: 'OAuth authorization expired or was revoked; reconnect the account.',
     });
   });
 });

@@ -18,6 +18,7 @@ import {
 import { openNodeVault } from '@outreachr/core/node';
 import type { CalendarEvent, MailboxMessage } from '@outreachr/connectors';
 import { z } from 'zod';
+import { parseInvestorCsv, type InvestorCsvRow } from './investor-csv';
 import type {
   ActivityItem,
   AgentContextGrant,
@@ -25,11 +26,13 @@ import type {
   AgentProposalReviewResult,
   AgentStatus,
   AppBootstrap,
+  CommandMap,
   CommandResultMap,
   Confidence,
   ConnectorStatus,
   DraftMessage,
   FounderSetupInput,
+  InvestorCsvPreview,
   InvestorDetail,
   InvestorKind,
   InvestorSummary,
@@ -57,7 +60,7 @@ const MAX_EXPORT_NAME_ATTEMPTS = 1_000;
 async function readBoundedFile(
   path: string,
   maximumBytes: number,
-  label: 'Local vault' | 'Backup' | 'Seed',
+  label: 'Local vault' | 'Backup' | 'Seed' | 'CSV',
 ): Promise<Uint8Array> {
   const handle = await open(path, 'r');
   try {
@@ -383,6 +386,15 @@ interface ClaimRow {
   status: string;
   observed_at: string | null;
   updated_at: string;
+}
+
+interface PersonContactInput {
+  personId: string;
+  kind: 'work_email' | 'personal_email' | 'linkedin' | 'x';
+  value: string;
+  visibility: 'private' | 'public';
+  sourceUrl?: string;
+  contributionEligible: boolean;
 }
 
 interface ContactRow {
@@ -1830,6 +1842,15 @@ export class VaultService {
     headquarters?: string;
     description?: string;
   }): Promise<InvestorSummary> {
+    const id = this.#createInvestorRecord(input);
+    await this.persist();
+    return this.#investors().find((investor) => investor.id === id)!;
+  }
+
+  #createInvestorRecord(
+    input: CommandMap['investor.create'],
+    origin: 'local' | 'import' = 'local',
+  ): string {
     const now = this.#now().toISOString();
     const id = `firm:local:${createHash('sha256').update(input.name.trim().toLowerCase()).digest('hex').slice(0, 24)}`;
     this.#repository.upsertFirm({
@@ -1841,12 +1862,11 @@ export class VaultService {
       description: input.description ?? null,
       isPublic: false,
       contributionEligible: false,
-      origin: 'local',
+      origin,
       createdAt: now,
       updatedAt: now,
     });
-    await this.persist();
-    return this.#investors().find((investor) => investor.id === id)!;
+    return id;
   }
 
   async updateRound(input: {
@@ -2016,14 +2036,90 @@ export class VaultService {
     return this.#investors().find((investor) => investor.id === investorId)!;
   }
 
-  async addPersonContact(input: {
-    personId: string;
-    kind: 'work_email' | 'personal_email' | 'linkedin' | 'x';
-    value: string;
-    visibility: 'private' | 'public';
-    sourceUrl?: string;
-    contributionEligible: boolean;
-  }): Promise<PersonSummary> {
+  async createPerson(input: CommandMap['person.create']): Promise<PersonSummary> {
+    const personId = this.#vault.transaction(() => this.#createPersonRecord(input));
+    await this.persist();
+    return this.#allPeople().find((person) => person.id === personId)!;
+  }
+
+  #createPersonRecord(
+    input: CommandMap['person.create'],
+    origin: 'local' | 'import' = 'local',
+  ): string {
+    if (!this.#vault.scalar('SELECT 1 FROM firms WHERE id=?', [input.firmId])) {
+      throw new Error('Investor not found');
+    }
+    const normalizedName = input.name.trim().toLocaleLowerCase('en-US').replace(/\s+/gu, ' ');
+    if (
+      this.#vault.scalar('SELECT 1 FROM people WHERE firm_id=? AND normalized_name=?', [
+        input.firmId,
+        normalizedName,
+      ])
+    ) {
+      throw new Error(
+        'A person with this name already exists at this investor. Edit that person instead.',
+      );
+    }
+    const now = this.#now().toISOString();
+    const personId = `person:local:${randomUUID()}`;
+    this.#repository.upsertPerson({
+      id: personId,
+      firmId: input.firmId,
+      fullName: input.name.trim(),
+      title: input.title?.trim() || null,
+      isInvestor: true,
+      isPublic: false,
+      contributionEligible: false,
+      origin,
+      createdAt: now,
+      updatedAt: now,
+    });
+    for (const [kind, value] of [
+      ['work_email', input.workEmail],
+      ['personal_email', input.personalEmail],
+    ] as const) {
+      if (value)
+        this.#addPersonContactRecord({
+          personId,
+          kind,
+          value,
+          visibility: 'private',
+          contributionEligible: false,
+        });
+    }
+    appendAuditEntry(this.#vault, {
+      occurredAt: now,
+      actorType: 'founder',
+      actorId: 'founder',
+      action: 'person.created',
+      entityType: 'person',
+      entityId: personId,
+      detail: { firmId: input.firmId, visibility: 'private' },
+    });
+    return personId;
+  }
+
+  async addPersonContact(input: PersonContactInput): Promise<PersonSummary> {
+    this.#vault.transaction(() => this.#addPersonContactRecord(input));
+    await this.persist();
+    return this.#allPeople().find((person) => person.id === input.personId)!;
+  }
+
+  #addPersonContactRecord(input: PersonContactInput): void {
+    if (!this.#vault.scalar('SELECT 1 FROM people WHERE id=?', [input.personId])) {
+      throw new Error('Person not found');
+    }
+    if (input.kind === 'work_email' || input.kind === 'personal_email') {
+      const owner = this.#vault.one<{ full_name: string }>(
+        `SELECT p.full_name FROM contact_methods c JOIN people p ON p.id=c.person_id
+         WHERE c.kind IN ('work_email','personal_email') AND lower(trim(c.value))=? AND c.person_id<>? LIMIT 1`,
+        [input.value.trim().toLowerCase(), input.personId],
+      );
+      if (owner)
+        throw new Error(
+          `This email already belongs to ${owner.full_name}. Edit that person instead.`,
+        );
+    }
     if (
       input.kind === 'personal_email' &&
       (input.visibility !== 'private' ||
@@ -2139,10 +2235,6 @@ export class VaultService {
         [now, input.personId],
       );
     }
-    await this.persist();
-    const person = this.#allPeople().find((item) => item.id === input.personId);
-    if (!person) throw new Error('Person not found');
-    return person;
   }
 
   async createTask(input: Omit<TaskItem, 'id' | 'createdAt'>): Promise<TaskItem> {
@@ -3115,6 +3207,197 @@ export class VaultService {
     });
     await this.persist();
     return { databasePath, diffPath };
+  }
+
+  async #readInvestorCsv(path: string) {
+    const bytes = await readBoundedFile(path, 5 * 1024 * 1024, 'CSV');
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      throw new Error('CSV must be saved as UTF-8 text');
+    }
+    return { sha256, parsed: parseInvestorCsv(text) };
+  }
+
+  #planInvestorCsv(parsed: ReturnType<typeof parseInvestorCsv>) {
+    const normalize = (value: string): string =>
+      value.trim().toLocaleLowerCase('en-US').replace(/\s+/gu, ' ');
+    const firms = new Map<string, string | null>();
+    for (const firm of this.#vault.all<{ id: string; name: string }>('SELECT id,name FROM firms')) {
+      const key = normalize(firm.name);
+      firms.set(key, firms.has(key) ? null : firm.id);
+    }
+    const people = new Map<string, string | null>();
+    for (const person of this.#vault.all<{ id: string; firm_id: string; normalized_name: string }>(
+      'SELECT id,firm_id,normalized_name FROM people WHERE firm_id IS NOT NULL',
+    )) {
+      const key = `${person.firm_id}:${person.normalized_name}`;
+      people.set(key, people.has(key) ? null : person.id);
+    }
+    const owners = new Map<string, Set<string>>();
+    for (const contact of this.#vault.all<{ person_id: string; value: string }>(
+      "SELECT person_id,value FROM contact_methods WHERE kind IN ('work_email','personal_email')",
+    )) {
+      const key = contact.value.trim().toLowerCase();
+      const ids = owners.get(key) ?? new Set<string>();
+      ids.add(contact.person_id);
+      owners.set(key, ids);
+    }
+    const newFirms = new Map<string, InvestorCsvRow>();
+    const newPeople = new Map<string, CommandMap['person.create']>();
+    const rows: InvestorCsvPreview['rows'] = [];
+    const errors = [...parsed.errors];
+    let skippedRows = 0;
+    for (const row of parsed.rows) {
+      const summary: InvestorCsvPreview['rows'][number] = {
+        row: row.row,
+        name: row.name,
+        personName: row.personName ?? null,
+        email: row.workEmail ?? row.personalEmail ?? null,
+        action: 'skip',
+      };
+      try {
+        const firmKey = normalize(row.name);
+        let firmId = firms.get(firmKey);
+        if (firmId === null)
+          throw new Error(
+            'Multiple investors have this name; resolve the duplicate before importing',
+          );
+        if (!firmId) {
+          firmId = `firm:local:${createHash('sha256').update(row.name.trim().toLowerCase()).digest('hex').slice(0, 24)}`;
+          firms.set(firmKey, firmId);
+          newFirms.set(firmId, row);
+          summary.action = 'add';
+        }
+        const plannedFirm = newFirms.get(firmId);
+        if (
+          plannedFirm &&
+          (plannedFirm.kind !== row.kind ||
+            ['website', 'headquarters', 'description'].some((field) => {
+              const key = field as 'website' | 'headquarters' | 'description';
+              return row[key] && plannedFirm[key] && row[key] !== plannedFirm[key];
+            }))
+        )
+          throw new Error('Conflicting details for the same investor in this CSV');
+        if (plannedFirm) {
+          for (const key of ['website', 'headquarters', 'description'] as const) {
+            if (!plannedFirm[key] && row[key]) {
+              plannedFirm[key] = row[key];
+              summary.action = 'add';
+            }
+          }
+        }
+        if (row.personName) {
+          const personKey = `${firmId}:${normalize(row.personName)}`;
+          const existingId = people.get(personKey);
+          if (existingId === null)
+            throw new Error(
+              'Multiple people have this name at this investor; resolve the duplicate first',
+            );
+          const personId = existingId ?? `planned:${personKey}`;
+          for (const email of [row.workEmail, row.personalEmail]) {
+            if (!email) continue;
+            const matches = owners.get(email.toLowerCase());
+            if (matches && (matches.size !== 1 || !matches.has(personId)))
+              throw new Error(
+                'An email already belongs to another person; edit the existing contact instead',
+              );
+            if (existingId && !matches)
+              throw new Error(
+                'An existing person has different contact details; edit that person instead',
+              );
+          }
+          if (!existingId) {
+            const input: CommandMap['person.create'] = {
+              firmId,
+              name: row.personName,
+              ...(row.title ? { title: row.title } : {}),
+              ...(row.workEmail ? { workEmail: row.workEmail } : {}),
+              ...(row.personalEmail ? { personalEmail: row.personalEmail } : {}),
+            };
+            newPeople.set(personId, input);
+            people.set(personKey, personId);
+            for (const email of [row.workEmail, row.personalEmail]) {
+              if (email) owners.set(email.toLowerCase(), new Set([personId]));
+            }
+            summary.action = 'add';
+          }
+        }
+        if (summary.action === 'skip') skippedRows += 1;
+      } catch (error) {
+        summary.action = 'error';
+        errors.push({
+          row: row.row,
+          message: error instanceof Error ? error.message : 'Invalid import row',
+        });
+      }
+      rows.push(summary);
+    }
+    return { newFirms, newPeople, rows, errors, skippedRows };
+  }
+
+  async previewInvestorCsv(path: string): Promise<InvestorCsvPreview> {
+    const { sha256, parsed } = await this.#readInvestorCsv(path);
+    const plan = this.#planInvestorCsv(parsed);
+    return {
+      sha256,
+      totalRows: parsed.totalRows,
+      newInvestors: plan.newFirms.size,
+      newPeople: plan.newPeople.size,
+      skippedRows: plan.skippedRows,
+      ignoredColumns: parsed.ignoredColumns,
+      errors: plan.errors,
+      rows: plan.rows.slice(0, 50),
+    };
+  }
+
+  async importInvestorCsv(
+    path: string,
+    expectedSha256: string,
+  ): Promise<CommandResultMap['data.importInvestorCsv']> {
+    const { sha256, parsed } = await this.#readInvestorCsv(path);
+    if (sha256 !== expectedSha256)
+      throw new Error('CSV changed after preview. Preview the file again before importing.');
+    const plan = this.#planInvestorCsv(parsed);
+    if (plan.errors.length)
+      throw new Error(
+        `CSV has ${plan.errors.length} invalid rows. Preview and correct them before importing.`,
+      );
+    this.#vault.transaction(() => {
+      for (const row of plan.newFirms.values())
+        this.#createInvestorRecord(
+          {
+            name: row.name,
+            kind: row.kind,
+            ...(row.website ? { website: row.website } : {}),
+            ...(row.headquarters ? { headquarters: row.headquarters } : {}),
+            ...(row.description ? { description: row.description } : {}),
+          },
+          'import',
+        );
+      for (const person of plan.newPeople.values()) this.#createPersonRecord(person, 'import');
+      appendAuditEntry(this.#vault, {
+        occurredAt: this.#now().toISOString(),
+        actorType: 'founder',
+        actorId: 'founder',
+        action: 'data.private_csv_imported',
+        entityType: 'import',
+        entityId: sha256,
+        detail: {
+          investors: plan.newFirms.size,
+          people: plan.newPeople.size,
+          skippedRows: plan.skippedRows,
+        },
+      });
+    });
+    await this.persist();
+    return {
+      importedInvestors: plan.newFirms.size,
+      importedPeople: plan.newPeople.size,
+      skippedRows: plan.skippedRows,
+    };
   }
 
   async exportCsv(

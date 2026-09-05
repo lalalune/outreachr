@@ -93,6 +93,7 @@ function ConnectorSetup({ provider }: { provider: ConnectorProvider }): React.JS
   const { data, command, notify } = useWorkspace();
   const existing = data?.connectors.find((item) => item.provider === provider);
   const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
   const [tenantId, setTenantId] = useState('common');
   const [relationshipSync, setRelationshipSync] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -108,8 +109,10 @@ function ConnectorSetup({ provider }: { provider: ConnectorProvider }): React.JS
         provider,
         clientId,
         ...(provider === 'microsoft' ? { tenantId } : {}),
+        ...(provider === 'google' && clientSecret.trim() ? { clientSecret } : {}),
         relationshipSync,
       });
+      setClientSecret('');
       await command('connector.connect', { provider });
       notify({
         tone: 'success',
@@ -117,6 +120,7 @@ function ConnectorSetup({ provider }: { provider: ConnectorProvider }): React.JS
         detail: 'Tokens are encrypted with the operating-system credential facility.',
       });
     } finally {
+      setClientSecret('');
       setBusy(false);
     }
   };
@@ -184,7 +188,8 @@ function ConnectorSetup({ provider }: { provider: ConnectorProvider }): React.JS
         <strong>{existing.error}</strong>
         <p>
           Review the registered client type, callback, account access, and requested scopes below,
-          then reconnect. Outreachr never asks for an account password or client secret.
+          then reconnect. For Google Desktop clients, enter the issued client secret if required.
+          Outreachr never asks for your account password.
         </p>
       </div>
     </div>
@@ -304,9 +309,9 @@ function ConnectorSetup({ provider }: { provider: ConnectorProvider }): React.JS
                 <div>
                   <strong>Create a Desktop app OAuth client</strong>
                   <p>
-                    Choose Desktop app and copy only its client ID. Outreachr uses the system
-                    browser, PKCE, and a temporary 127.0.0.1 loopback callback. Do not paste a
-                    client secret.
+                    Choose Desktop app and copy its client ID and the client secret issued by
+                    Google. Outreachr uses the system browser, PKCE, and a temporary 127.0.0.1
+                    loopback callback. The client secret is stored encrypted on this device.
                   </p>
                   <ExternalLinkButton href={officialLinks.googleClients}>
                     OAuth clients
@@ -384,10 +389,21 @@ function ConnectorSetup({ provider }: { provider: ConnectorProvider }): React.JS
           value={clientId}
           onChange={(event) => setClientId(event.target.value)}
           placeholder="Paste the provider-issued client ID"
-          hint="This identifier is public configuration. Never paste a client secret or account password."
+          hint="This identifier is public configuration. Paste only the client ID in this field."
           autoComplete="off"
           spellCheck={false}
         />
+        {provider === 'google' ? (
+          <TextField
+            label="Desktop client secret"
+            type="password"
+            value={clientSecret}
+            onChange={(event) => setClientSecret(event.target.value)}
+            hint="Use the secret issued for your Google Desktop app. Leave empty to keep a saved secret for the same client ID. Disconnect removes it."
+            autoComplete="new-password"
+            spellCheck={false}
+          />
+        ) : null}
         {provider === 'microsoft' ? (
           <TextField
             label="Tenant"

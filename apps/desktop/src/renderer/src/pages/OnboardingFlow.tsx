@@ -9,16 +9,19 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
+import { z } from 'zod';
 import type { FounderSetupInput, RoundState } from '../../../shared/contracts';
 import { Badge, Button, TextField } from '../components/ui';
 import { useWorkspace } from '../state/WorkspaceContext';
 
 const steps = ['Founder', 'Company', 'Round', 'Privacy', 'Ready'] as const;
+const founderEmailSchema = z.string().email();
 
 export function OnboardingFlow(): React.JSX.Element {
   const { data, command, notify } = useWorkspace();
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [form, setForm] = useState<FounderSetupInput>({
     founderName: '',
     founderEmail: '',
@@ -36,7 +39,10 @@ export function OnboardingFlow(): React.JSX.Element {
 
   const valid = useMemo(() => {
     if (step === 0)
-      return form.founderName.trim().length > 1 && /.+@.+\..+/.test(form.founderEmail);
+      return (
+        form.founderName.trim().length > 1 &&
+        founderEmailSchema.safeParse(form.founderEmail).success
+      );
     if (step === 1)
       return form.companyName.trim().length > 1 && form.companyOneLiner.trim().length > 8;
     if (step === 2)
@@ -51,6 +57,7 @@ export function OnboardingFlow(): React.JSX.Element {
     setForm((current) => ({ ...current, [key]: value }));
 
   const finish = async (): Promise<void> => {
+    setSaveError(null);
     setSaving(true);
     try {
       await command('onboarding.complete', form);
@@ -59,6 +66,10 @@ export function OnboardingFlow(): React.JSX.Element {
         title: 'Your local round is ready',
         detail: 'Pinned research seed validated and imported.',
       });
+    } catch (error) {
+      setSaveError(
+        error instanceof Error ? error.message : 'The workspace could not be created. Try again.',
+      );
     } finally {
       setSaving(false);
     }
@@ -125,6 +136,9 @@ export function OnboardingFlow(): React.JSX.Element {
                 <TextField
                   label="Work email"
                   type="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
                   value={form.founderEmail}
                   onChange={(event) => update('founderEmail', event.target.value)}
                   hint="Used as the default sender identity after you connect a provider."
@@ -363,8 +377,9 @@ export function OnboardingFlow(): React.JSX.Element {
                   <Mail aria-hidden="true" />
                   <p>
                     To sync or send, open Settings → Mail & calendar. Create a founder-owned desktop
-                    OAuth client, follow the exact callback and scope instructions, and paste only
-                    its public client ID—never a client secret or account password.
+                    OAuth client, follow the exact callback and scope instructions, and enter its
+                    client ID. Google Desktop clients also use the dedicated client secret field. Do
+                    not enter an account password.
                   </p>
                 </div>
                 <div className="ready-next">
@@ -380,6 +395,7 @@ export function OnboardingFlow(): React.JSX.Element {
               </div>
             </>
           ) : null}
+          {saveError ? <p role="alert">{saveError}</p> : null}
           <footer className="onboarding-footer">
             <Button
               tone="quiet"
