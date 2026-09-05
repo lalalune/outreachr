@@ -590,7 +590,6 @@ Outreachr is built with the following installed build and runtime dependencies. 
 | string-width                                | 4.2.3                | MIT                       | sindresorhus/string-width                                                                            |
 | strip-ansi                                  | 6.0.1                | MIT                       | chalk/strip-ansi                                                                                     |
 | strip-indent                                | 3.0.0                | MIT                       | sindresorhus/strip-indent                                                                            |
-| stripe                                      | 22.6.1               | MIT                       | https://github.com/stripe/stripe-node                                                                |
 | sumchecker                                  | 3.0.1                | Apache-2.0                | https://github.com/malept/sumchecker#readme                                                          |
 | supports-color                              | 10.2.2               | MIT                       | chalk/supports-color                                                                                 |
 | supports-color                              | 7.2.0                | MIT                       | chalk/supports-color                                                                                 |
@@ -15216,33 +15215,6 @@ Redistribution and use in source and binary forms, with or without modification,
 THIS SOFTWARE IS PROVIDED BY GARY COURT "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL GARY COURT OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 The views and conclusions contained in the software and documentation are those of the authors and should not be interpreted as representing official policies, either expressed or implied, of Gary Court.
-```
-
-### b36d54d51ac6f20b867c24264b9433f54372c3370d4984cf1c9884c5c6de1f7a
-
-Applies to: stripe@22.6.1
-
-```text
-Copyright (C) 2011 Ask Bjørn Hansen
-Copyright (C) 2013 Stripe, Inc. (https://stripe.com)
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
 ```
 
 ### b3d63451b0d3231890bb1df74f49210576d1d3810b410cc9ffb30139d941c5f3
