@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { InvestorDetail, MeetingItem, SourceReviewItem } from '../../src/shared/contracts';
 import { App } from '../../src/renderer/src/App';
@@ -6,15 +6,17 @@ import { HashRouter } from '../../src/renderer/src/lib/router';
 import { WorkspaceProvider } from '../../src/renderer/src/state/WorkspaceContext';
 import { bootstrapFixture, installBridge } from './fixtures';
 
-function renderRoute(route: string): void {
+async function renderRoute(route: string): Promise<void> {
   window.location.hash = route;
-  render(
-    <HashRouter>
-      <WorkspaceProvider>
-        <App />
-      </WorkspaceProvider>
-    </HashRouter>,
-  );
+  await act(async () => {
+    render(
+      <HashRouter>
+        <WorkspaceProvider>
+          <App />
+        </WorkspaceProvider>
+      </HashRouter>,
+    );
+  });
 }
 
 function investorDetail(expectedCheckUsd: number | null): InvestorDetail {
@@ -60,7 +62,7 @@ describe('renderer command flows', () => {
 
     try {
       installBridge(fixture, command as never);
-      renderRoute('#/investors/firm:test#portfolio');
+      await renderRoute('#/investors/firm:test#portfolio');
 
       expect(await screen.findByRole('heading', { name: 'Calm Capital' })).toBeVisible();
       await waitFor(() => expect(scrolledIds).toContain('portfolio'));
@@ -91,7 +93,7 @@ describe('renderer command flows', () => {
       throw new Error(`Unexpected renderer test command: ${name}`);
     });
     installBridge(fixture, command as never);
-    renderRoute('#/investors/firm:test');
+    await renderRoute('#/investors/firm:test');
 
     expect(await screen.findByRole('heading', { name: 'Calm Capital' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Record expected check' }));
@@ -125,7 +127,7 @@ describe('renderer command flows', () => {
       throw new Error(`Unexpected renderer test command: ${name}`);
     });
     const bridge = installBridge(fixture, command as never);
-    renderRoute('#/pipeline');
+    await renderRoute('#/pipeline');
 
     expect(await screen.findByRole('heading', { name: 'Pipeline' })).toBeVisible();
     expect(screen.getByText(/Last message/u)).toBeVisible();
@@ -169,7 +171,7 @@ describe('renderer command flows', () => {
       throw new Error(`Unexpected renderer test command: ${name}`);
     });
     installBridge(fixture, command as never);
-    renderRoute('#/meetings');
+    await renderRoute('#/meetings');
 
     expect(await screen.findByRole('heading', { name: 'Meetings' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Open meeting' }));
@@ -228,7 +230,7 @@ describe('renderer command flows', () => {
       status: payload.decision === 'accept' ? 'accepted' : 'rejected',
     }));
     installBridge(fixture, command as never);
-    renderRoute('#/review');
+    await renderRoute('#/review');
 
     expect(await screen.findByRole('heading', { name: 'Sources & review' })).toBeVisible();
     const acceptRow = screen.getByText('Accept Capital').closest('article');
@@ -254,7 +256,7 @@ describe('renderer command flows', () => {
   it('treats cancelled backup, restore, seed import, and CSV selections as no-ops', async () => {
     const fixture = bootstrapFixture();
     const bridge = installBridge(fixture);
-    renderRoute('#/settings/data');
+    await renderRoute('#/settings/data');
 
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Create backup' }));
@@ -294,7 +296,7 @@ describe('renderer command flows', () => {
     const fixture = bootstrapFixture();
     const bridge = installBridge(fixture);
     vi.mocked(bridge.selectFile).mockResolvedValue('/tmp/founder.outreachr-backup');
-    renderRoute('#/settings/data');
+    await renderRoute('#/settings/data');
 
     expect(await screen.findByRole('heading', { name: 'Settings' })).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Create backup' }));
