@@ -444,204 +444,225 @@ describe('cloud CRM and file transport', () => {
     });
   });
 
-  it('persists CRM commands across runtime instances, exports bytes, and meters an exact model proposal', async () => {
-    const workspaces = new WorkspaceStore(pool);
-    const user = identity();
-    const org = (await workspaces.signIn(user)).organizations[0]!;
-    const session = {
-      userId: user.id,
-      grant: 'outreachr_fixture',
-      expiresAt: new Date(Date.now() + 600_000),
-    };
-    let completions = 0;
-    let inferenceMode: 'success' | 'disconnect' | 'cancel' = 'success';
-    let providerStarted = () => {};
-    const inference = new InferenceClient(
-      'https://fixture.eliza.test',
-      'fixture-key-not-real',
-      async (url, init) => {
-        if (String(url).endsWith('/models'))
+  it.each([
+    { label: 'Sol trial', plan: 'sol', model: 'openai/gpt-5.6-sol', paid: false },
+    { label: 'Sol subscription', plan: 'sol', model: 'openai/gpt-5.6-sol', paid: true },
+    { label: 'Astra subscription', plan: 'astra', model: 'openai/gpt-6-astra', paid: true },
+  ])(
+    'persists CRM, exports, and meters exact-model proposals for $label',
+    async ({ plan, model, paid }) => {
+      const workspaces = new WorkspaceStore(pool);
+      const user = identity();
+      const org = (await workspaces.signIn(user)).organizations[0]!;
+      if (paid) {
+        await pool.query(
+          `UPDATE outreachr.organizations SET plan=$2,subscription_id=$3,
+         subscription_status='active',subscription_period_start=now()-interval '1 hour',
+         subscription_period_end=now()+interval '30 days' WHERE id=$1`,
+          [org.id, plan, `sub_fixture_${randomUUID()}`],
+        );
+      }
+      const access = entitlement(await memberOrganization(pool, user.id, org.id), new Date());
+      expect(access.trial).toBe(!paid);
+      expect(access.model).toBe(model);
+      expect(access.allowanceCents).toBe(paid ? (plan === 'astra' ? 7000 : 1500) : 200);
+      const session = {
+        userId: user.id,
+        grant: 'outreachr_fixture',
+        expiresAt: new Date(Date.now() + 600_000),
+      };
+      let completions = 0;
+      let inferenceMode: 'success' | 'disconnect' | 'cancel' = 'success';
+      let providerStarted = () => {};
+      const inference = new InferenceClient(
+        'https://fixture.eliza.test',
+        'fixture-key-not-real',
+        async (url, init) => {
+          if (String(url).endsWith('/models'))
+            return Response.json({
+              data: [
+                {
+                  id: model,
+                  context_length: 1_050_000,
+                  pricing: { prompt: '0.000002', completion: '0.00001' },
+                },
+              ],
+            });
+          const input = JSON.parse(String(init!.body));
+          expect(input.model).toBe(model);
+          expect(new Headers(init!.headers).get('Authorization')).toBe(
+            'Bearer fixture-key-not-real',
+          );
+          expect(input.messages[1].content).not.toContain(user.email);
+          expect(input.tools).toBeUndefined();
+          completions++;
+          if (inferenceMode === 'disconnect')
+            throw new Error('Provider disconnected after accepting the request');
+          if (inferenceMode === 'cancel') {
+            providerStarted();
+            return await new Promise<Response>((_resolve, reject) => {
+              const signal = init!.signal!;
+              signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+              if (signal.aborted) reject(signal.reason);
+            });
+          }
           return Response.json({
-            data: [
+            model: input.model,
+            choices: [
               {
-                id: 'openai/gpt-5.6-sol',
-                context_length: 1_050_000,
-                pricing: { prompt: '0.000002', completion: '0.00001' },
+                finish_reason: 'stop',
+                message: {
+                  content: JSON.stringify({
+                    summary: 'Review the proposed task.',
+                    proposals: [
+                      {
+                        id: 'one',
+                        kind: 'task',
+                        title: 'Prepare follow-up',
+                        rationale: 'Human review required.',
+                        investorId: null,
+                        payload: {
+                          title: 'Prepare follow-up',
+                          notes: null,
+                          dueAt: null,
+                          investorId: null,
+                          personId: null,
+                        },
+                      },
+                    ],
+                  }),
+                },
               },
             ],
+            usage: { prompt_tokens: 100, completion_tokens: 100 },
           });
-        const input = JSON.parse(String(init!.body));
-        expect(input.model).toBe('openai/gpt-5.6-sol');
-        expect(input.messages[1].content).not.toContain(user.email);
-        expect(input.tools).toBeUndefined();
-        completions++;
-        if (inferenceMode === 'disconnect')
-          throw new Error('Provider disconnected after accepting the request');
-        if (inferenceMode === 'cancel') {
-          providerStarted();
-          return await new Promise<Response>((_resolve, reject) => {
-            const signal = init!.signal!;
-            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
-            if (signal.aborted) reject(signal.reason);
-          });
-        }
-        return Response.json({
-          model: input.model,
-          choices: [
-            {
-              finish_reason: 'stop',
-              message: {
-                content: JSON.stringify({
-                  summary: 'Review the proposed task.',
-                  proposals: [
-                    {
-                      id: 'one',
-                      kind: 'task',
-                      title: 'Prepare follow-up',
-                      rationale: 'Human review required.',
-                      investorId: null,
-                      payload: {
-                        title: 'Prepare follow-up',
-                        notes: null,
-                        dueAt: null,
-                        investorId: null,
-                        personId: null,
-                      },
-                    },
-                  ],
-                }),
-              },
-            },
-          ],
-          usage: { prompt_tokens: 100, completion_tokens: 100 },
+        },
+      );
+      const eliza = new ElizaClient('https://fixture.eliza.test', 'fixture-client-secret');
+      const runs = new AgentRuns();
+      const runtime = () =>
+        new CloudRuntime({
+          pool,
+          eliza,
+          revision: 'test',
+          agentFactory: (context) => new CloudAgent(context, inference, runs),
         });
-      },
-    );
-    const eliza = new ElizaClient('https://fixture.eliza.test', 'fixture-client-secret');
-    const runs = new AgentRuns();
-    const runtime = () =>
-      new CloudRuntime({
-        pool,
-        eliza,
-        revision: 'test',
-        agentFactory: (context) => new CloudAgent(context, inference, runs),
+      const initial = await runtime().bootstrap(session, user, org.id);
+      expect(initial.isFirstRun).toBe(true);
+      expect(initial.vaultPath).toBe('Cloud workspace');
+      await runtime().execute(session, user, org.id, 'onboarding.complete', {
+        founderName: 'Test Founder',
+        founderEmail: user.email,
+        companyName: 'Cloud Test',
+        companyOneLiner: 'An integration fixture.',
+        stage: 'seed',
+        targetAmount: 1_000_000,
+        targetCheckMinimum: null,
+        targetCheckMaximum: null,
+        sectors: ['AI'],
+        geographies: ['United States'],
+        narrative: 'Fixture only.',
       });
-    const initial = await runtime().bootstrap(session, user, org.id);
-    expect(initial.isFirstRun).toBe(true);
-    expect(initial.vaultPath).toBe('Cloud workspace');
-    await runtime().execute(session, user, org.id, 'onboarding.complete', {
-      founderName: 'Test Founder',
-      founderEmail: user.email,
-      companyName: 'Cloud Test',
-      companyOneLiner: 'An integration fixture.',
-      stage: 'seed',
-      targetAmount: 1_000_000,
-      targetCheckMinimum: null,
-      targetCheckMaximum: null,
-      sectors: ['AI'],
-      geographies: ['United States'],
-      narrative: 'Fixture only.',
-    });
-    const firm = await runtime().execute(session, user, org.id, 'investor.create', {
-      name: 'Cloud Test Investor',
-      kind: 'angel',
-    });
-    const person = await runtime().execute(session, user, org.id, 'person.create', {
-      firmId: firm.id,
-      name: 'Shaw Fixture',
-      personalEmail: 'shaw@example.test',
-    });
-    const reopened = await runtime().bootstrap(session, user, org.id);
-    expect(reopened.people.find((item) => item.id === person.id)?.personalEmail).toBe(
-      'shaw@example.test',
-    );
-    const output = await runtime().execute(session, user, org.id, 'data.exportCsv', {
-      directory: 'cloud-downloads',
-      kind: 'people',
-    });
-    const file = await new FileStore(pool).get(user.id, org.id, output.path);
-    expect(file.content.toString()).toContain('shaw@example.test');
-    await expect(
-      runtime().execute(session, user, org.id, 'data.exportCsv', {
-        directory: '/tmp',
+      const firm = await runtime().execute(session, user, org.id, 'investor.create', {
+        name: 'Cloud Test Investor',
+        kind: 'angel',
+      });
+      const person = await runtime().execute(session, user, org.id, 'person.create', {
+        firmId: firm.id,
+        name: 'Shaw Fixture',
+        personalEmail: 'shaw@example.test',
+      });
+      const reopened = await runtime().bootstrap(session, user, org.id);
+      expect(reopened.people.find((item) => item.id === person.id)?.personalEmail).toBe(
+        'shaw@example.test',
+      );
+      const output = await runtime().execute(session, user, org.id, 'data.exportCsv', {
+        directory: 'cloud-downloads',
         kind: 'people',
-      }),
-    ).rejects.toMatchObject({ code: 'download_target_invalid' });
-    const events: AgentEvent[] = [];
-    const result = await runtime().execute(
-      session,
-      user,
-      org.id,
-      'agent.run',
-      { provider: 'codex', prompt: 'Suggest one preparation task.', disclosedContextIds: [] },
-      (event) => events.push(event),
-    );
-    expect(events.map((event) => event.type)).toEqual(['started', 'tool_proposal', 'completed']);
-    expect(completions).toBe(1);
-    const final = await runtime().bootstrap(session, user, org.id);
-    expect(final.agentProposals.some((proposal) => proposal.agentRunId === result.runId)).toBe(
-      true,
-    );
-    expect(final.tasks.some((task) => task.title === 'Prepare follow-up')).toBe(false);
-    const charged = (
-      await pool.query('SELECT status,model,settled_cents FROM outreachr.usage WHERE org_id=$1', [
+      });
+      const file = await new FileStore(pool).get(user.id, org.id, output.path);
+      expect(file.content.toString()).toContain('shaw@example.test');
+      await expect(
+        runtime().execute(session, user, org.id, 'data.exportCsv', {
+          directory: '/tmp',
+          kind: 'people',
+        }),
+      ).rejects.toMatchObject({ code: 'download_target_invalid' });
+      const events: AgentEvent[] = [];
+      const result = await runtime().execute(
+        session,
+        user,
         org.id,
-      ])
-    ).rows;
-    expect(charged).toEqual([
-      { status: 'completed', model: 'openai/gpt-5.6-sol', settled_cents: 1 },
-    ]);
-    inferenceMode = 'disconnect';
-    const failedEvents: AgentEvent[] = [];
-    await runtime().execute(
-      session,
-      user,
-      org.id,
-      'agent.run',
-      { provider: 'codex', prompt: 'Connection failure fixture.', disclosedContextIds: [] },
-      (event) => failedEvents.push(event),
-    );
-    expect(failedEvents.map((event) => event.type)).toEqual(['started', 'error']);
-    inferenceMode = 'cancel';
-    const pending = new Promise<void>((resolve) => {
-      providerStarted = resolve;
-    });
-    let cancelledRunId = '';
-    const cancelledEvents: AgentEvent[] = [];
-    const active = runtime().execute(
-      session,
-      user,
-      org.id,
-      'agent.run',
-      { provider: 'codex', prompt: 'Cancellation fixture.', disclosedContextIds: [] },
-      (event) => {
-        cancelledRunId = event.runId;
-        cancelledEvents.push(event);
-      },
-    );
-    await pending;
-    expect(runs.cancel(cancelledRunId, randomUUID(), org.id)).toEqual({ cancelled: false });
-    expect(runs.cancel(cancelledRunId, user.id, randomUUID())).toEqual({ cancelled: false });
-    expect(runs.cancel(cancelledRunId, user.id, org.id)).toEqual({ cancelled: true });
-    await active;
-    expect(cancelledEvents.map((event) => event.type)).toEqual(['started', 'error']);
-    expect(runs.cancel(cancelledRunId, user.id, org.id)).toEqual({ cancelled: false });
-    expect(completions).toBe(3);
-    const uncertain = (
-      await pool.query(
-        "SELECT status,settled_cents,reserved_cents FROM outreachr.usage WHERE org_id=$1 AND status='ambiguous'",
-        [org.id],
-      )
-    ).rows;
-    expect(uncertain).toHaveLength(2);
-    for (const item of uncertain) {
-      expect(item.settled_cents).toBeNull();
-      expect(item.reserved_cents).toBeGreaterThan(0);
-    }
-    expect((await runtime().bootstrap(session, user, org.id)).agentProposals).toHaveLength(
-      final.agentProposals.length,
-    );
-  }, 120_000);
+        'agent.run',
+        { provider: 'codex', prompt: 'Suggest one preparation task.', disclosedContextIds: [] },
+        (event) => events.push(event),
+      );
+      expect(events.map((event) => event.type)).toEqual(['started', 'tool_proposal', 'completed']);
+      expect(completions).toBe(1);
+      const final = await runtime().bootstrap(session, user, org.id);
+      expect(final.agentProposals.some((proposal) => proposal.agentRunId === result.runId)).toBe(
+        true,
+      );
+      expect(final.tasks.some((task) => task.title === 'Prepare follow-up')).toBe(false);
+      const charged = (
+        await pool.query('SELECT status,model,settled_cents FROM outreachr.usage WHERE org_id=$1', [
+          org.id,
+        ])
+      ).rows;
+      expect(charged).toEqual([{ status: 'completed', model, settled_cents: 1 }]);
+      inferenceMode = 'disconnect';
+      const failedEvents: AgentEvent[] = [];
+      await runtime().execute(
+        session,
+        user,
+        org.id,
+        'agent.run',
+        { provider: 'codex', prompt: 'Connection failure fixture.', disclosedContextIds: [] },
+        (event) => failedEvents.push(event),
+      );
+      expect(failedEvents.map((event) => event.type)).toEqual(['started', 'error']);
+      inferenceMode = 'cancel';
+      const pending = new Promise<void>((resolve) => {
+        providerStarted = resolve;
+      });
+      let cancelledRunId = '';
+      const cancelledEvents: AgentEvent[] = [];
+      const active = runtime().execute(
+        session,
+        user,
+        org.id,
+        'agent.run',
+        { provider: 'codex', prompt: 'Cancellation fixture.', disclosedContextIds: [] },
+        (event) => {
+          cancelledRunId = event.runId;
+          cancelledEvents.push(event);
+        },
+      );
+      await pending;
+      expect(runs.cancel(cancelledRunId, randomUUID(), org.id)).toEqual({ cancelled: false });
+      expect(runs.cancel(cancelledRunId, user.id, randomUUID())).toEqual({ cancelled: false });
+      expect(runs.cancel(cancelledRunId, user.id, org.id)).toEqual({ cancelled: true });
+      await active;
+      expect(cancelledEvents.map((event) => event.type)).toEqual(['started', 'error']);
+      expect(runs.cancel(cancelledRunId, user.id, org.id)).toEqual({ cancelled: false });
+      expect(completions).toBe(3);
+      const uncertain = (
+        await pool.query(
+          "SELECT status,settled_cents,reserved_cents FROM outreachr.usage WHERE org_id=$1 AND status='ambiguous'",
+          [org.id],
+        )
+      ).rows;
+      expect(uncertain).toHaveLength(2);
+      for (const item of uncertain) {
+        expect(item.settled_cents).toBeNull();
+        expect(item.reserved_cents).toBeGreaterThan(0);
+      }
+      expect((await runtime().bootstrap(session, user, org.id)).agentProposals).toHaveLength(
+        final.agentProposals.length,
+      );
+    },
+    120_000,
+  );
 });
 
 describe('workspace subscription authority', () => {
