@@ -10,6 +10,14 @@ updates:
     open-pull-requests-limit: 10
     cooldown:
       default-days: 7
+    # Revisit these majors when typescript-eslint and electron-vite support them.
+    ignore:
+      - dependency-name: typescript
+        versions: ['^7.0.0']
+      - dependency-name: vite
+        versions: ['^8.0.0']
+      - dependency-name: '@vitejs/plugin-react'
+        versions: ['^6.0.0']
     groups:
       production-dependencies:
         dependency-type: production
