@@ -23,9 +23,13 @@ export class CoreVault {
   constructor(sqlite: SqlJsStatic, options: OpenVaultOptions = {}) {
     this.sqlite = sqlite;
     this.db = options.bytes ? new sqlite.Database(options.bytes) : new sqlite.Database();
+    this.#applyConnectionPragmas();
+    migrate(this.db, options.appliedAt ?? new Date().toISOString());
+  }
+
+  #applyConnectionPragmas(): void {
     this.db.run('PRAGMA foreign_keys = ON');
     this.db.run('PRAGMA recursive_triggers = OFF');
-    migrate(this.db, options.appliedAt ?? new Date().toISOString());
   }
 
   get schemaVersion(): number {
@@ -82,7 +86,13 @@ export class CoreVault {
   }
 
   export(): Uint8Array {
-    return this.db.export();
+    const bytes = this.db.export();
+    // sql.js closes and reopens the underlying connection inside export(), which
+    // resets connection-scoped pragmas to their SQLite defaults. Without this the
+    // vault silently loses foreign-key enforcement after its first persist, so
+    // ON DELETE CASCADE stops firing and deletes leave orphaned rows behind.
+    this.#applyConnectionPragmas();
+    return bytes;
   }
 
   integrityCheck(): { ok: boolean; messages: string[] } {
