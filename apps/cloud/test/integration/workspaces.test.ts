@@ -1427,6 +1427,37 @@ describe('managed Gmail end-to-end command flow', () => {
       (await runtime().bootstrap(session, user, org.id)).drafts.find((item) => item.id === draft.id)
         ?.providerMessageId,
     ).toBe('gmail-confirmed-receipt');
+    for (const state of ['disconnected', 'unavailable'] as const) {
+      mailboxState = state;
+      const offlineContact = await runtime().execute(session, user, org.id, 'person.create', {
+        firmId: firm.id,
+        name: `CRM ${state}`,
+        personalEmail: `${state}@example.test`,
+      });
+      expect(offlineContact.personalEmail).toBe(`${state}@example.test`);
+      const meeting = await runtime().execute(session, user, org.id, 'meeting.create', {
+        title: `Manual meeting ${state}`,
+        startsAt: '2026-09-10T12:00:00.000Z',
+        endsAt: '2026-09-10T13:00:00.000Z',
+        provider: 'manual',
+        investorId: firm.id,
+        personIds: [person.id],
+        location: null,
+        agenda: null,
+        notes: null,
+        status: 'upcoming',
+      });
+      expect(meeting.provider).toBe('manual');
+      await expect(
+        runtime().execute(session, user, org.id, 'draft.send', {
+          id: draft.id,
+          expectedContentHash: approved.contentHash,
+        }),
+      ).rejects.toMatchObject({
+        code: state === 'disconnected' ? 'mailbox_changed' : 'eliza_request_unconfirmed',
+      });
+      expect(sends).toBe(1);
+    }
     await pool.query(
       "UPDATE outreachr.organizations SET trial_ends_at=now()-interval '1 day' WHERE id=$1",
       [org.id],

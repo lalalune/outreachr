@@ -36,6 +36,13 @@ const OPTIONAL_MAILBOX_ERRORS = new Set([
   'eliza_permission_required',
   'eliza_request_unconfirmed',
 ]);
+const PROVIDER_COMMANDS = new Set<keyof CommandMap>([
+  'draft.send',
+  'connector.test',
+  'connector.syncCalendar',
+  'connector.syncMail',
+  'meeting.create',
+]);
 const ADMIN_COMMANDS = new Set<keyof CommandMap>([
   'onboarding.complete',
   'communications.policy.update',
@@ -130,7 +137,7 @@ export class CloudRuntime {
         const mailbox = await this.mailboxes
           .current(session.userId, orgId, session.grant, client)
           .catch((error: unknown) => {
-            // CRM reads need workspace authority, not a working Gmail connection.
+            // Allow local workspace work when the selected Gmail connection is unavailable.
             // Never reuse unconfirmed mailbox credentials or suppress authentication/DB errors.
             if (
               mailboxAccess === 'optional' &&
@@ -244,6 +251,9 @@ export class CloudRuntime {
     payload: unknown,
     emit?: (event: AgentEvent) => void,
   ): Promise<CommandResultMap[K]> {
+    const manualMeeting =
+      name === 'meeting.create' &&
+      z.object({ provider: z.literal('manual') }).safeParse(payload).success;
     requireCondition(
       !NATIVE_COMMANDS.has(name),
       400,
@@ -324,7 +334,7 @@ export class CloudRuntime {
         return result;
       },
       emit,
-      READ_COMMANDS.has(name) ? 'optional' : 'required',
+      PROVIDER_COMMANDS.has(name) && !manualMeeting ? 'required' : 'optional',
     );
   }
 }
