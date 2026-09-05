@@ -1,6 +1,7 @@
 /** Real PostgreSQL commits with an explicitly simulated generic Cloud provider. */
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+import { closeTestDatabase } from '../disposable-database';
 import { beforeAll, afterAll, expect, it } from 'vitest';
 import { WorkspaceStore, entitlement, memberOrganization } from '../../src/workspaces';
 import { CloudProvisioning } from '../../src/billing-provisioning';
@@ -19,11 +20,7 @@ beforeAll(async () => {
   await admin.query(`CREATE DATABASE "${database}"`);
   await migrate(pool);
 });
-afterAll(async () => {
-  await pool.end();
-  await admin.query(`DROP DATABASE "${database}" WITH (FORCE)`);
-  await admin.end();
-});
+afterAll(() => closeTestDatabase(pool, admin, database));
 const identity = () => ({
   id: randomUUID(),
   email: `${randomUUID()}@example.test`,

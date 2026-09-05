@@ -5,6 +5,7 @@ import { DELEGATION_SCOPES, GOOGLE_CAPABILITIES } from '../../src/delegation';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
+import { closeTestDatabase } from '../disposable-database';
 import { migrate } from '../../src/schema';
 import { WorkspaceStore, entitlement, memberOrganization } from '../../src/workspaces';
 import { UsageStore } from '../../src/usage';
@@ -52,21 +53,7 @@ beforeAll(async () => {
   await admin.query(`CREATE DATABASE "${database}"`);
   await migrate(pool);
 });
-afterAll(async () => {
-  await pool.end();
-  // pg's pool shutdown can resolve before PostgreSQL observes the final socket close.
-  // Wait for that boundary instead of terminating clients during Vitest teardown.
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const connections = await admin.query<{ count: number }>(
-      'SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=$1',
-      [database],
-    );
-    if (connections.rows[0]!.count === 0) break;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  await admin.query(`DROP DATABASE IF EXISTS "${database}"`);
-  await admin.end();
-});
+afterAll(() => closeTestDatabase(pool, admin, database));
 
 describe('workspace authority', () => {
   it('concurrent first login creates exactly one default workspace and one trial', async () => {

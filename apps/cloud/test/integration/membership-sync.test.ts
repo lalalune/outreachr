@@ -1,6 +1,7 @@
 /** Verifies durable app intents across actual PostgreSQL commits and SDK transport failures. */
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+import { closeTestDatabase } from '../disposable-database';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import type {
   AppBillingMember,
@@ -25,19 +26,7 @@ beforeAll(async () => {
   await admin.query(`CREATE DATABASE "${database}"`);
   await migrate(pool);
 });
-afterAll(async () => {
-  await pool.end();
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const count = await admin.query<{ count: number }>(
-      'SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=$1',
-      [database],
-    );
-    if (count.rows[0]!.count === 0) break;
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  }
-  await admin.query(`DROP DATABASE "${database}"`);
-  await admin.end();
-});
+afterAll(() => closeTestDatabase(pool, admin, database));
 const principal = () => ({
   id: randomUUID(),
   email: `${randomUUID()}@example.test`,

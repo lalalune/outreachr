@@ -1,6 +1,7 @@
 /** Actual database commits around purchaser SDK calls, including ambiguous provider outcomes. */
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+import { closeTestDatabase } from '../disposable-database';
 import { beforeAll, afterAll, expect, it } from 'vitest';
 import { BillingStore } from '../../src/billing';
 import { ElizaClient } from '../../src/eliza';
@@ -20,11 +21,7 @@ beforeAll(async () => {
   await admin.query(`CREATE DATABASE "${database}"`);
   await migrate(pool);
 });
-afterAll(async () => {
-  await pool.end();
-  await admin.query(`DROP DATABASE "${database}" WITH (FORCE)`);
-  await admin.end();
-});
+afterAll(() => closeTestDatabase(pool, admin, database));
 const identity = () => ({
   id: randomUUID(),
   email: `${randomUUID()}@example.test`,

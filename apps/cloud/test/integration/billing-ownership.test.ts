@@ -1,6 +1,7 @@
 /** Tests ownership authority, durable requests and current projections with real PostgreSQL. */
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+import { closeTestDatabase } from '../disposable-database';
 import { beforeAll, afterAll, expect, it } from 'vitest';
 import { CloudOwnership } from '../../src/billing-ownership';
 import { ElizaClient } from '../../src/eliza';
@@ -20,11 +21,7 @@ beforeAll(async () => {
   await admin.query(`CREATE DATABASE "${database}"`);
   await migrate(pool);
 });
-afterAll(async () => {
-  await pool.end();
-  await admin.query(`DROP DATABASE "${database}" WITH (FORCE)`);
-  await admin.end();
-});
+afterAll(() => closeTestDatabase(pool, admin, database));
 const identity = () => ({
   id: randomUUID(),
   email: `${randomUUID()}@example.test`,
