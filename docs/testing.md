@@ -31,6 +31,8 @@ OUTREACHR_LIVE_CODEX_SMOKE=1 pnpm smoke:codex
 
 `smoke:codex` prepares development sidecars while preserving their vendor platform signatures so the operating system can execute them outside an app bundle. To exercise a final package instead, also set `OUTREACHR_PACKAGED_EXECUTABLE` to the final Outreachr executable (for example, the executable inside a mounted macOS DMG). Packaged mode uses a temporary loopback-only Chromium debugging port rather than the disabled Electron main-process inspector, so the production fuse configuration remains intact. The harness creates an isolated local profile, completes onboarding, confirms that Codex reports ready, executes one proposal-only/no-context turn, requires a successful terminal event, and deletes the temporary profile. It does not run in CI because it depends on a human-owned subscription session. Release packaging always uses the separate normalized-resource path and signs the complete app bundle.
 
+Append `--with-mcp-proposal` to exercise a real loopback tool call in the same synthetic profile. The harness asks for one pending task proposal, then reads the persisted snapshot to require a successful MCP audit entry, exactly one pending proposal, no applied task, and no send reservation. It never approves the proposal or discloses real CRM records.
+
 ## Live Claude subscription smoke
 
 After Anthropic has approved the deployment and the official local CLI is signed in, validate the exact approved Agent SDK path with one isolated, tool-free turn:
