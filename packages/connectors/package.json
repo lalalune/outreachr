@@ -29,10 +29,10 @@
     "verify": "npm run typecheck && npm test && npm run build"
   },
   "devDependencies": {
-    "@types/node": "26.2.0",
+    "@types/node": "26.4.0",
     "@vitest/coverage-v8": "4.1.11",
     "msw": "2.15.0",
-    "typescript": "5.9.3",
+    "typescript": "6.0.3",
     "vitest": "4.1.11"
   },
   "engines": {
