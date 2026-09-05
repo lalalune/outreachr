@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFile, readdir, stat, truncate, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEncryptedBackup, restoreEncryptedBackup } from '@outreachr/core';
 import type { VaultService } from '../../src/main/vault-service';
 import {
@@ -56,6 +56,27 @@ describe('VaultService with the production investor seed', () => {
       }
     }
     await Promise.all(directories.splice(0).map(removeTemporaryDirectory));
+  });
+
+  it('batches evidence reads for the full seed and observes subsequent edits', async () => {
+    const { service } = await create();
+    const reads = vi.spyOn(service.vault, 'all');
+    const before = await service.bootstrap();
+    expect(before.investors).toHaveLength(192);
+    expect(before.people).toHaveLength(192);
+    const evidenceReads = reads.mock.calls.filter(([sql]) =>
+      /FROM (claims|entity_tags)\b/i.test(sql),
+    );
+    // A full view must not issue per-investor or per-person evidence queries.
+    expect(evidenceReads.length).toBeLessThanOrEqual(8);
+    const firm = before.investors.find((item) => item.confidence === 'supported')!;
+    expect(firm).toBeDefined();
+    service.vault.run("UPDATE claims SET status='stale' WHERE entity_type='firm' AND entity_id=?", [
+      firm.id,
+    ]);
+    const after = await service.bootstrap();
+    expect(after.investors.find((item) => item.id === firm.id)?.confidence).toBe('stale');
+    expect(after.people).toEqual(before.people);
   });
 
   it('pins, imports, and persists the complete production seed in an isolated vault', async () => {

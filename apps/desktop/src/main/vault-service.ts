@@ -743,13 +743,33 @@ export class VaultService {
     );
   }
 
-  #tags(entityType: 'firm' | 'person', entityId: string, kind?: string): string[] {
-    const rows = this.#vault.all<{ kind: string; value: string }>(
-      `SELECT tg.kind,tg.value FROM entity_tags et JOIN tags tg ON tg.id=et.tag_id
-       WHERE et.entity_type=? AND et.entity_id=? ${kind ? 'AND tg.kind=?' : ''} ORDER BY tg.kind,tg.value`,
-      kind ? [entityType, entityId, kind] : [entityType, entityId],
-    );
-    return rows.map((row) => row.value);
+  // Read evidence once for a complete view. Preserve the per-entity ordering used
+  // by detail views; these maps live only for this synchronous snapshot.
+  #evidenceForType(entityType: 'firm' | 'person') {
+    const claims = new Map<string, ClaimRow[]>();
+    for (const row of this.#vault.all<ClaimRow & { entity_id: string }>(
+      'SELECT entity_id,id,field,value_json,source_id,status,observed_at,updated_at FROM claims WHERE entity_type=? ORDER BY updated_at DESC,id',
+      [entityType],
+    )) {
+      const existing = claims.get(row.entity_id);
+      if (existing) existing.push(row);
+      else claims.set(row.entity_id, [row]);
+    }
+    const tags = new Map<string, Map<string, string[]>>();
+    for (const row of this.#vault.all<{ entity_id: string; kind: string; value: string }>(
+      'SELECT et.entity_id,tg.kind,tg.value FROM entity_tags et JOIN tags tg ON tg.id=et.tag_id WHERE et.entity_type=? ORDER BY tg.kind,tg.value',
+      [entityType],
+    )) {
+      let entity = tags.get(row.entity_id);
+      if (!entity) {
+        entity = new Map();
+        tags.set(row.entity_id, entity);
+      }
+      const values = entity.get(row.kind);
+      if (values) values.push(row.value);
+      else entity.set(row.kind, [row.value]);
+    }
+    return { claims, tags };
   }
 
   #claimValues(claims: readonly ClaimRow[], fields: readonly string[]): string[] {
@@ -791,6 +811,8 @@ export class VaultService {
     firmName: string | null,
     contacts: readonly ContactRow[],
     targets: readonly TargetRow[],
+    claims: readonly ClaimRow[],
+    focusTags: readonly string[],
   ): PersonSummary {
     const workEmail = contacts.find((contact) => contact.kind === 'work_email')?.value ?? null;
     const personalEmail =
@@ -822,11 +844,7 @@ export class VaultService {
        ) ORDER BY CASE scope WHEN 'global' THEN 0 WHEN 'person' THEN 1 WHEN 'firm' THEN 2 WHEN 'email' THEN 3 ELSE 4 END LIMIT 1`,
       [row.id, row.firm_id ?? '', email ?? '', emailDomain],
     );
-    const claims = this.#claims('person', row.id);
-    const sectors = unique([
-      ...this.#tags('person', row.id, 'focus'),
-      ...this.#claimValues(claims, ['focus', 'sectors']),
-    ]);
+    const sectors = unique([...focusTags, ...this.#claimValues(claims, ['focus', 'sectors'])]);
     const investorKinds = unique(
       this.#claimValues(claims, ['primary_investor_type', 'investor_types']),
     ).map((value) => investorKind(value, []));
@@ -884,6 +902,7 @@ export class VaultService {
         .map((firm) => [firm.id, firm.name]),
     );
     const contacts = this.#contactMap();
+    const evidence = this.#evidenceForType('person');
     return this.#vault
       .all<PersonRow>('SELECT id,firm_id,full_name,title,city FROM people ORDER BY full_name')
       .map((person) =>
@@ -892,6 +911,8 @@ export class VaultService {
           person.firm_id ? (firmNames.get(person.firm_id) ?? null) : null,
           contacts.get(person.id) ?? [],
           targetRows,
+          evidence.claims.get(person.id) ?? [],
+          evidence.tags.get(person.id)?.get('focus') ?? [],
         ),
       );
   }
@@ -902,8 +923,8 @@ export class VaultService {
     stages: readonly string[],
     geographies: readonly string[],
     check: MoneyRange,
+    round: Record<string, unknown> | null,
   ): { score: number; reasons: string[] } {
-    const round = this.#roundRow();
     if (!round)
       return {
         score: 50,
@@ -949,6 +970,8 @@ export class VaultService {
   }
 
   #investors(): InvestorSummary[] {
+    const evidence = this.#evidenceForType('firm');
+    const round = this.#roundRow();
     const targets = this.#targetsByFirm();
     const lastMessages = new Map(
       this.#vault
@@ -991,22 +1014,22 @@ export class VaultService {
         'SELECT id,name,website,investor_type,headquarters,description,updated_at FROM firms ORDER BY name',
       )
       .map((firm) => {
-        const claims = this.#claims('firm', firm.id);
+        const claims = evidence.claims.get(firm.id) ?? [];
         const sectors = unique([
-          ...this.#tags('firm', firm.id, 'sector'),
+          ...(evidence.tags.get(firm.id)?.get('sector') ?? []),
           ...this.#claimValues(claims, ['sectors', 'focus']),
         ]);
         const stages = unique([
-          ...this.#tags('firm', firm.id, 'stage'),
+          ...(evidence.tags.get(firm.id)?.get('stage') ?? []),
           ...this.#claimValues(claims, ['stages']),
         ]);
         const geographies = unique([
-          ...this.#tags('firm', firm.id, 'geography'),
+          ...(evidence.tags.get(firm.id)?.get('geography') ?? []),
           ...this.#claimValues(claims, ['priority_geography', 'geography_basis']),
         ]);
         const check = parseMoney(this.#claimValues(claims, ['check_size'])[0] ?? '');
         const target = targets.get(firm.id);
-        const calculated = this.#fit(claims, sectors, stages, geographies, check);
+        const calculated = this.#fit(claims, sectors, stages, geographies, check, round);
         // The explicit record type is authoritative for the primary kind. A sector
         // focus such as crypto must not turn an angel or solo GP into a fund.
         const kind = investorKind(firm.investor_type, []);
