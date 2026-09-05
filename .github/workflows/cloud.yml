@@ -65,6 +65,10 @@ jobs:
       ELIZA_API_ORIGIN: https://api.invalid
       ELIZA_LOGIN_ORIGIN: https://login.invalid
       ELIZA_APP_ID: 00000000-0000-4000-8000-000000000001
+      ELIZA_DELEGATION_CLIENT_ID: 00000000-0000-4000-8000-000000000002
+      ELIZA_PRODUCT_FAMILY_KEY: workspace
+      ELIZA_BILLING_ENVIRONMENT: test
+      ELIZA_BILLING_NOTIFICATION_KEYS: '{"00000000-0000-4000-8000-000000000003":"container-notification-test-secret-no-provider-access"}'
       ELIZA_CLIENT_SECRET: container-test-client-secret-no-provider-access
       ELIZA_INFERENCE_API_KEY: container-test-key-no-provider-access
       SESSION_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
@@ -91,6 +95,8 @@ jobs:
             -e DATABASE_URL -e DATABASE_SSL -e PORT -e PUBLIC_ORIGIN \
             -e ELIZA_API_ORIGIN -e ELIZA_LOGIN_ORIGIN -e ELIZA_APP_ID \
             -e ELIZA_CLIENT_SECRET -e ELIZA_INFERENCE_API_KEY \
+            -e ELIZA_DELEGATION_CLIENT_ID -e ELIZA_PRODUCT_FAMILY_KEY \
+            -e ELIZA_BILLING_ENVIRONMENT -e ELIZA_BILLING_NOTIFICATION_KEYS \
             -e SESSION_ENCRYPTION_KEY -e EDGE_SECRET -e REVISION \
             outreachr-container-test
           curl --fail --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:4174/health

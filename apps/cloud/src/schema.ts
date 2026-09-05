@@ -32,6 +32,25 @@ export async function migrate(pool: Pool): Promise<void> {
         cancel_at_period_end boolean NOT NULL DEFAULT false,
         created_at timestamptz NOT NULL DEFAULT now()
       );
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS trial_started_at timestamptz;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_provisioning_state text CHECK (cloud_provisioning_state IN ('pending','ready','ineligible','failed','migration_required'));
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_trial_requested boolean NOT NULL DEFAULT false;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_provisioning_error text;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_app_id uuid;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_billing_account_id uuid;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_billing_environment text CHECK (cloud_billing_environment IN ('test','live'));
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_product_family_key text;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_billing_access text CHECK (cloud_billing_access IN ('granted','read_only','denied'));
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_billing_valid_until timestamptz;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_billing_observed_at timestamptz;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_billing_invalidated boolean NOT NULL DEFAULT false;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_ownership_confirmed boolean NOT NULL DEFAULT false;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_ownership_pending boolean NOT NULL DEFAULT false;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_ownership_observed_at timestamptz;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_administrator_revision text;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_administrators jsonb NOT NULL DEFAULT '[]'::jsonb;
+      CREATE UNIQUE INDEX IF NOT EXISTS organizations_cloud_billing_account
+        ON outreachr.organizations(cloud_app_id,cloud_billing_environment,cloud_billing_account_id);
       CREATE TABLE IF NOT EXISTS outreachr.memberships (
         org_id uuid NOT NULL REFERENCES outreachr.organizations(id),
         user_id text NOT NULL REFERENCES outreachr.users(id),
@@ -51,6 +70,43 @@ export async function migrate(pool: Pool): Promise<void> {
         revoked_at timestamptz,
         created_at timestamptz NOT NULL DEFAULT now()
       );
+      ALTER TABLE outreachr.memberships ADD COLUMN IF NOT EXISTS cloud_membership_ready boolean NOT NULL DEFAULT true;
+      ALTER TABLE outreachr.memberships ADD COLUMN IF NOT EXISTS cloud_sync_job_id uuid;
+      CREATE TABLE IF NOT EXISTS outreachr.cloud_membership_jobs (
+        position bigserial UNIQUE,
+        id uuid PRIMARY KEY,
+        org_id uuid NOT NULL REFERENCES outreachr.organizations(id),
+        user_id text NOT NULL REFERENCES outreachr.users(id),
+        desired_role text CHECK (desired_role IN ('owner','admin','member','viewer')),
+        app_id uuid NOT NULL,
+        billing_account_id uuid NOT NULL,
+        environment text NOT NULL CHECK (environment IN ('test','live')),
+        product_family_key text NOT NULL,
+        client_id uuid,
+        request_json jsonb,
+        state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','confirmed','superseded')),
+        attempts integer NOT NULL DEFAULT 0,
+        retry_after timestamptz NOT NULL DEFAULT now(),
+        error_code text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS cloud_membership_jobs_pending ON outreachr.cloud_membership_jobs(org_id,position) WHERE state='pending';
+      CREATE TABLE IF NOT EXISTS outreachr.cloud_ownership_jobs (
+        id uuid PRIMARY KEY,
+        org_id uuid NOT NULL REFERENCES outreachr.organizations(id),
+        actor_id text NOT NULL REFERENCES outreachr.users(id),
+        target_id text NOT NULL REFERENCES outreachr.users(id),
+        action text NOT NULL CHECK (action IN ('grant','revoke','transfer')),
+        app_id uuid NOT NULL,
+        client_id uuid NOT NULL,
+        billing_account_id uuid NOT NULL,
+        environment text NOT NULL CHECK (environment IN ('test','live')),
+        request_json jsonb,
+        response_json jsonb,
+        state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','confirmed','reconciled','superseded')),
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS cloud_ownership_jobs_pending ON outreachr.cloud_ownership_jobs(org_id) WHERE state='pending';
       CREATE UNIQUE INDEX IF NOT EXISTS invites_pending_email
         ON outreachr.invites(org_id, lower(email))
         WHERE consumed_by IS NULL AND revoked_at IS NULL;
@@ -105,6 +161,7 @@ export async function migrate(pool: Pool): Promise<void> {
         created_at timestamptz NOT NULL DEFAULT now(),
         UNIQUE (org_id, request_key)
       );
+      ALTER TABLE outreachr.usage ADD COLUMN IF NOT EXISTS response_json jsonb;
       CREATE INDEX IF NOT EXISTS usage_period ON outreachr.usage(org_id,period_key);
       CREATE TABLE IF NOT EXISTS outreachr.checkout_attempts (
         id uuid PRIMARY KEY,
@@ -116,9 +173,42 @@ export async function migrate(pool: Pool): Promise<void> {
         created_at timestamptz NOT NULL DEFAULT now()
       );
       CREATE UNIQUE INDEX IF NOT EXISTS checkout_attempts_pending ON outreachr.checkout_attempts(org_id) WHERE status='pending';
+      CREATE TABLE IF NOT EXISTS outreachr.cloud_billing_intents (
+        id uuid PRIMARY KEY,
+        org_id uuid NOT NULL REFERENCES outreachr.organizations(id),
+        user_id text NOT NULL REFERENCES outreachr.users(id),
+        app_id uuid NOT NULL,
+        client_id uuid NOT NULL,
+        billing_account_id uuid NOT NULL,
+        environment text NOT NULL CHECK (environment IN ('test','live')),
+        product_family_key text NOT NULL,
+        kind text NOT NULL CHECK (kind IN ('checkout','update','portal','external','trial')),
+        request_json jsonb NOT NULL,
+        review_json jsonb NOT NULL,
+        operation_json jsonb,
+        state text NOT NULL DEFAULT 'review' CHECK (state IN ('review','pending','complete','superseded')),
+        confirmed_at timestamptz,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS cloud_billing_intents_pending ON outreachr.cloud_billing_intents(org_id) WHERE state='pending';
+      ALTER TABLE outreachr.cloud_billing_intents ADD COLUMN IF NOT EXISTS rejection_code text;
+      ALTER TABLE outreachr.cloud_billing_intents DROP CONSTRAINT IF EXISTS cloud_billing_intents_kind_check;
+      ALTER TABLE outreachr.cloud_billing_intents ADD CONSTRAINT cloud_billing_intents_kind_check CHECK (kind IN ('checkout','update','portal','external','trial'));
+      ALTER TABLE outreachr.cloud_billing_intents ADD COLUMN IF NOT EXISTS cancellation_request_json jsonb;
+      ALTER TABLE outreachr.cloud_billing_intents ADD COLUMN IF NOT EXISTS cancellation_operation_json jsonb;
+      ALTER TABLE outreachr.cloud_billing_intents ADD COLUMN IF NOT EXISTS cancellation_pending boolean NOT NULL DEFAULT false;
       CREATE TABLE IF NOT EXISTS outreachr.billing_events (
         id text PRIMARY KEY,
         processed_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS outreachr.cloud_billing_notifications (
+        id uuid PRIMARY KEY,
+        app_id uuid NOT NULL,
+        environment text NOT NULL CHECK (environment IN ('test','live')),
+        billing_account_id uuid NOT NULL,
+        product_family_key text NOT NULL,
+        payload_hash text NOT NULL,
+        received_at timestamptz NOT NULL DEFAULT now()
       );
       CREATE TABLE IF NOT EXISTS outreachr.audit (
         id bigserial PRIMARY KEY,

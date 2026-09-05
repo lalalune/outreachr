@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useWorkspace } from '../../desktop/src/renderer/src/state/WorkspaceContext';
 import { api, post } from './bridge';
 import type { Account, Organization } from './types';
+import { BillingRequest, type BillingProgress } from './BillingRequest';
 
 interface Connection {
   connectionId: string | null;
@@ -13,6 +14,7 @@ interface Member {
   name: string;
   email: string;
   role: string;
+  syncPending?: boolean;
 }
 interface Invite {
   id: string;
@@ -43,23 +45,51 @@ export function Settings({
   const [busy, setBusy] = useState(false);
   const [plan, setPlan] = useState(org.plan);
   const [seats, setSeats] = useState(org.seat_capacity);
-  const [used, setUsed] = useState(0);
+  const [billingRequest, setBillingRequest] = useState<BillingProgress | null>(null);
+  const [allowance, setAllowance] = useState<{
+    usedCents: number;
+    allowanceCents: number;
+    reservedCents?: number;
+    source: string;
+  } | null>(null);
   const [postal, setPostal] = useState(data?.communicationPolicy.postalAddress ?? '');
   const [password, setPassword] = useState('');
-  const admin = org.role === 'owner' || org.role === 'admin';
+  const ownershipReady =
+    org.cloud_provisioning_state !== 'pending' &&
+    (!org.cloud_billing_account_id ||
+      (org.cloud_ownership_confirmed && !org.cloud_ownership_pending));
+  const admin =
+    (org.role === 'owner' || org.role === 'admin') &&
+    org.cloud_membership_ready !== false &&
+    ownershipReady;
   const load = useCallback(async () => {
-    const [people, pending, mailboxes, selected, usage] = await Promise.all([
+    const [people, pending, mailboxes, selected, usage] = await Promise.allSettled([
       api<Member[]>(`${base}/members`),
       admin ? api<Invite[]>(`${base}/invites`) : [],
       api<Connection[]>('/api/google/connections'),
       api<{ connectionId: string } | null>(`${base}/mailbox`),
-      api<{ usedCents: number }>(`${base}/usage`),
+      api<{ usedCents: number; allowanceCents: number; reservedCents?: number; source: string }>(
+        `${base}/usage`,
+      ),
     ]);
-    setMembers(people);
-    setInvites(pending);
-    setConnections(mailboxes);
-    setConnectionId(selected?.connectionId ?? '');
-    setUsed(usage.usedCents);
+    // Optional Google setup must not hide loaded membership and billing controls.
+    setMembers(people.status === 'fulfilled' ? people.value : []);
+    setInvites(pending.status === 'fulfilled' ? pending.value : []);
+    setConnections(mailboxes.status === 'fulfilled' ? mailboxes.value : []);
+    setConnectionId(
+      mailboxes.status === 'fulfilled' && selected.status === 'fulfilled'
+        ? (selected.value?.connectionId ?? '')
+        : '',
+    );
+    setAllowance(usage.status === 'fulfilled' ? usage.value : null);
+    const failures = [people, pending, mailboxes, selected, usage]
+      .filter((result) => result.status === 'rejected')
+      .map((result) =>
+        result.reason instanceof Error
+          ? result.reason.message
+          : 'A workspace setting could not be loaded.',
+      );
+    if (failures.length) throw new Error([...new Set(failures)].join(' '));
   }, [base, admin]);
   useEffect(() => {
     void load().catch((cause: Error) => setError(cause.message));
@@ -99,9 +129,13 @@ export function Settings({
     setError('');
     setNotice('');
     try {
-      await work();
+      const result = await work();
       await Promise.all([load(), reload()]);
-      setNotice(message);
+      setNotice(
+        result && typeof result === 'object' && 'pending' in result && result.pending
+          ? 'The request is pending. Check its status to confirm the outcome.'
+          : message,
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The request failed.');
     } finally {
@@ -139,16 +173,28 @@ export function Settings({
           {org.cancel_at_period_end && 'Cancellation is scheduled for the end of the paid period.'}
         </p>
         <p>
-          AI allowance used: ${(used / 100).toFixed(2)} of $
-          {(org.entitlement.allowanceCents / 100).toFixed(2)}. Allowance uses uncached model catalog
-          token rates plus Cloud’s service markup. No automatic overage.
+          {allowance ? (
+            <>
+              AI allowance used: ${(allowance.usedCents / 100).toFixed(2)} of $
+              {(allowance.allowanceCents / 100).toFixed(2)}.
+              {Boolean(allowance.reservedCents) && (
+                <> Pending requests reserve ${((allowance.reservedCents ?? 0) / 100).toFixed(2)}.</>
+              )}
+              {allowance.source === 'local_estimate' && (
+                <> Usage is a local estimate while Cloud billing is being connected.</>
+              )}
+            </>
+          ) : (
+            'The current AI allowance could not be confirmed.'
+          )}{' '}
+          The workspace allowance does not increase with seat count. No automatic overage.
         </p>
         <label>
           Plan
           <select
             value={plan}
             onChange={(e) => setPlan(e.target.value as 'sol' | 'astra')}
-            disabled={org.role !== 'owner' || busy}
+            disabled={org.role !== 'owner' || busy || !ownershipReady}
           >
             <option value="sol">Sol — GPT-5.6 Sol · $49/seat</option>
             <option value="astra">Astra — GPT-6 Astra · $200/seat</option>
@@ -162,7 +208,7 @@ export function Settings({
             max="1000"
             value={seats}
             onChange={(e) => setSeats(Number(e.target.value))}
-            disabled={org.role !== 'owner' || busy}
+            disabled={org.role !== 'owner' || busy || !ownershipReady}
           />
         </label>
         <p>
@@ -170,33 +216,74 @@ export function Settings({
           {seats * (plan === 'sol' ? 49 : 200)}/month, before tax.
         </p>
         <button
-          disabled={org.role !== 'owner' || busy || !Number.isInteger(seats) || seats < 1}
+          disabled={
+            org.role !== 'owner' || busy || !ownershipReady || !Number.isInteger(seats) || seats < 1
+          }
           onClick={() =>
             void act(async () => {
-              const result = await post<{ url: string }>(`${base}/billing/checkout`, {
+              const result = await post<BillingProgress>(`${base}/billing/checkout`, {
                 plan,
                 seats,
               });
-              window.location.assign(result.url);
+              setBillingRequest(result);
             })
           }
         >
           Review subscription
         </button>
         <button
-          disabled={org.role !== 'owner' || busy || org.subscription_status === 'none'}
+          disabled={
+            org.role !== 'owner' || busy || !ownershipReady || org.subscription_status === 'none'
+          }
           onClick={() =>
             void act(async () => {
-              const result = await post<{ url: string }>(`${base}/billing/portal`, {});
-              window.location.assign(result.url);
+              const result = await post<BillingProgress>(`${base}/billing/portal`, {});
+              setBillingRequest(result);
             })
           }
         >
           Billing and cancellation
         </button>
+        {org.role === 'owner' && (
+          <BillingRequest
+            key={org.id}
+            base={base}
+            value={billingRequest}
+            onChange={setBillingRequest}
+            reload={reload}
+          />
+        )}
       </section>
       <section>
         <h2>Members</h2>
+        {org.cloud_billing_account_id && (
+          <>
+            <button
+              disabled={busy}
+              onClick={() =>
+                void act(() => post(`${base}/ownership/recover`, {}), 'Ownership status refreshed.')
+              }
+            >
+              Check ownership status
+            </button>
+            {org.cloud_ownership_pending && (
+              <p role="status">
+                An ownership change is pending. The original requester can check its status to
+                recover it.
+              </p>
+            )}
+            {!org.cloud_ownership_confirmed && (
+              <p role="status">Cloud ownership has not been confirmed.</p>
+            )}
+            {org.role === 'owner' && (
+              <p>
+                Transfer makes the selected editor an owner and changes your role to member. Seats
+                and billing stay with the workspace.
+              </p>
+            )}
+          </>
+        )}
+
         <table>
           <thead>
             <tr>
@@ -215,24 +302,61 @@ export function Settings({
                   <select
                     aria-label={`Role for ${member.email}`}
                     value={member.role}
-                    disabled={busy || org.role !== 'owner'}
+                    disabled={busy || org.role !== 'owner' || !ownershipReady}
                     onChange={(event) =>
                       void act(() =>
-                        api(`${base}/members/${member.id}`, {
-                          method: 'PATCH',
-                          body: JSON.stringify({ role: event.target.value }),
-                        }),
+                        org.cloud_billing_account_id &&
+                        (event.target.value === 'owner' || member.role === 'owner')
+                          ? post(`${base}/ownership/change`, {
+                              action: event.target.value === 'owner' ? 'grant' : 'revoke',
+                              targetId: member.id,
+                            })
+                          : api(`${base}/members/${member.id}`, {
+                              method: 'PATCH',
+                              body: JSON.stringify({ role: event.target.value }),
+                            }),
                       )
                     }
                   >
-                    {['owner', 'admin', 'member', 'viewer'].map((value) => (
+                    {(org.cloud_billing_account_id && member.role === 'owner'
+                      ? ['owner', 'member']
+                      : ['owner', 'admin', 'member', 'viewer']
+                    ).map((value) => (
                       <option key={value}>{value}</option>
                     ))}
                   </select>
                 </td>
                 <td>
+                  {member.syncPending && <span role="status">Syncing Cloud access. </span>}
+                  {org.cloud_billing_account_id &&
+                    org.role === 'owner' &&
+                    member.id !== account.user.id &&
+                    member.role !== 'owner' &&
+                    member.role !== 'viewer' && (
+                      <button
+                        disabled={busy || !ownershipReady || member.syncPending}
+                        onClick={() =>
+                          void act(
+                            () =>
+                              post(`${base}/ownership/change`, {
+                                action: 'transfer',
+                                targetId: member.id,
+                              }),
+                            'Ownership status refreshed.',
+                          )
+                        }
+                      >
+                        Transfer ownership to {member.email}
+                      </button>
+                    )}
+
                   <button
-                    disabled={busy || (!admin && member.id !== account.user.id)}
+                    disabled={
+                      busy ||
+                      Boolean(org.cloud_billing_account_id && member.role === 'owner') ||
+                      Boolean(org.cloud_ownership_pending) ||
+                      (!admin && member.id !== account.user.id)
+                    }
                     onClick={() =>
                       void act(() =>
                         api(`${base}/members/${member.id}`, {

@@ -20,14 +20,22 @@ import {
   type Organization,
   type Identity,
 } from './workspaces';
+import { CloudBillingAccounts } from './billing-accounts';
+import { BillingNotifications } from './billing-notifications';
+import { CloudMembershipSync } from './billing-memberships';
+import { CloudOwnership } from './billing-ownership';
+import { CloudProvisioning } from './billing-provisioning';
 import { BillingStore } from './billing';
 import { UsageStore } from './usage';
+import { cloudAllowanceSummary } from './billing-allowance';
 
 export interface CloudConfig {
   publicOrigin: string;
   elizaOrigin: string;
   elizaLoginOrigin: string;
   elizaAppId: string;
+  productFamilyKey: string;
+  billingNotificationKeys?: Record<string, string>;
   edgeSecret: string;
   production: boolean;
   revision: string;
@@ -48,14 +56,25 @@ export function createApp(options: {
   agentRuns?: AgentRuns;
 }) {
   const { config, pool, sessions, eliza } = options;
-  const workspaces = new WorkspaceStore(pool);
+  const workspaces = new WorkspaceStore(pool, () => new Date(), 'cloud');
   const usage = new UsageStore(pool);
-  const billing = new BillingStore(pool, eliza);
+  const billing = new BillingStore(pool, eliza, config.productFamilyKey);
+  const billingAccounts = new CloudBillingAccounts(pool, eliza, config.productFamilyKey);
+  const membershipSync = new CloudMembershipSync(pool, eliza, config.productFamilyKey);
+  const ownership = new CloudOwnership(pool, eliza, config.productFamilyKey);
+  const provisioning = new CloudProvisioning(pool, eliza, config.productFamilyKey);
+  const billingNotifications = new BillingNotifications(pool, {
+    appId: eliza.config.appId,
+    environment: eliza.config.billingEnvironment,
+    productFamilyKey: config.productFamilyKey,
+    keys: config.billingNotificationKeys ?? {},
+  });
   const app = new Hono<CloudEnv>();
   const sessionCookie = config.production ? '__Host-outreachr_session' : 'outreachr_session';
   const stateCookie = config.production ? '__Host-outreachr_login' : 'outreachr_login';
   const cookie = { httpOnly: true, secure: config.production, sameSite: 'Lax' as const, path: '/' };
 
+  app.use('/api/billing/notifications', bodyLimit({ maxSize: 65_536 }));
   app.use('*', bodyLimit({ maxSize: MAX_FILE_BYTES + 1024 }));
   app.use('*', async (c, next) => {
     if (!c.req.path.endsWith('/files') && Number(c.req.header('content-length') ?? 0) > 2_000_000)
@@ -77,7 +96,7 @@ export function createApp(options: {
       );
     if (
       !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method) &&
-      c.req.path !== '/api/billing/webhook'
+      c.req.path !== '/api/billing/notifications'
     ) {
       requireCondition(
         c.req.header('Origin') === config.publicOrigin &&
@@ -117,11 +136,7 @@ export function createApp(options: {
   app.get('/api/auth/login', async (c) => {
     const state = await sessions.beginLogin(c.req.query('returnTo') ?? '/');
     setCookie(c, stateCookie, state, { ...cookie, maxAge: 600 });
-    const target = new URL('/app-auth/authorize', config.elizaLoginOrigin);
-    target.searchParams.set('app_id', config.elizaAppId);
-    target.searchParams.set('redirect_uri', `${config.publicOrigin}/api/auth/callback`);
-    target.searchParams.set('state', state);
-    return c.redirect(target.href);
+    return c.redirect(eliza.authorizeUrl(state));
   });
   app.get('/api/auth/callback', async (c) => {
     const returnPath = await sessions.consumeLogin(
@@ -138,10 +153,10 @@ export function createApp(options: {
     setCookie(c, sessionCookie, session.token, { ...cookie, expires: session.expiresAt });
     return c.redirect(returnPath);
   });
-  app.post('/api/billing/webhook', async (c) => {
-    await billing.webhook(await c.req.text(), c.req.header('Stripe-Signature') ?? '');
-    return c.json({ received: true });
-  });
+  app.get('/api/google/callback', (c) => c.redirect('/#/settings'));
+  app.post('/api/billing/notifications', async (c) =>
+    c.json(await billingNotifications.receive(await c.req.text(), c.req.raw.headers)),
+  );
   const authenticate: MiddlewareHandler<CloudEnv> = async (c, next) => {
     const session = await sessions.get(getCookie(c, sessionCookie));
     const identity = await eliza.identity(session.grant);
@@ -173,6 +188,14 @@ export function createApp(options: {
       'Sign in again to confirm your account.',
     );
     const result = await workspaces.signIn(identity);
+    const organizations = await Promise.all(
+      result.organizations.map(async (org) => {
+        await provisioning.resume(session.userId, org.id, session.grant);
+        await ownership.ensureCurrent(session.userId, org.id, session.grant);
+        await membershipSync.runOrg(org.id, 20);
+        return billingAccounts.ensureCurrent(session.userId, org.id, session.grant);
+      }),
+    );
     return c.json({
       user: {
         id: result.user.id,
@@ -180,7 +203,7 @@ export function createApp(options: {
         name: result.user.name,
         defaultOrgId: result.user.default_org_id,
       },
-      organizations: result.organizations.map((org) => ({
+      organizations: organizations.map((org) => ({
         ...org,
         entitlement: entitlement(org, new Date()),
       })),
@@ -208,12 +231,61 @@ export function createApp(options: {
       'Sign in again to confirm your account.',
     );
     await workspaces.signIn(identity);
-    return c.json(await workspaces.acceptInvite(session.userId, input.token));
+    const accepted = await workspaces.acceptInvite(session.userId, input.token);
+    await membershipSync.runOrg(accepted.id);
+    return c.json(await memberOrganization(pool, session.userId, accepted.id));
   });
   app.use('/api/organizations/:orgId/*', async (c, next) => {
     const orgId = uuid.parse(c.req.param('orgId'));
-    c.set('organization', await memberOrganization(pool, c.get('session').userId, orgId));
+    const session = c.get('session');
+    const sensitive = /\/(members|invites|billing)(?:\/|$)/.test(c.req.path);
+    if (sensitive) {
+      // Accepted members can inspect local membership during a provider outage.
+      // Privileged reads and every mutation still require current Cloud authority.
+      const memberList = c.req.method === 'GET' && c.req.path.endsWith('/members');
+      await ownership.ensureCurrent(session.userId, orgId, session.grant, !memberList);
+    }
+    c.set(
+      'organization',
+      await billingAccounts.ensureCurrent(session.userId, orgId, session.grant),
+    );
     await next();
+  });
+  app.post('/api/organizations/:orgId/setup/retry', async (c) => {
+    z.object({})
+      .strict()
+      .parse(await c.req.json());
+    const session = c.get('session');
+    return c.json(
+      await provisioning.retry(session.userId, c.get('organization').id, session.grant),
+    );
+  });
+  app.post('/api/organizations/:orgId/ownership/change', async (c) => {
+    const input = z
+      .object({ action: z.enum(['grant', 'revoke', 'transfer']), targetId: uuid })
+      .strict()
+      .parse(await c.req.json());
+    const session = c.get('session'),
+      org = c.get('organization');
+    const result = await ownership.change(
+      session.userId,
+      org.id,
+      session.grant,
+      input.action,
+      input.targetId,
+    );
+    await membershipSync.runOrg(org.id, 20);
+    return c.json(result);
+  });
+  app.post('/api/organizations/:orgId/ownership/recover', async (c) => {
+    z.object({})
+      .strict()
+      .parse(await c.req.json());
+    const session = c.get('session'),
+      org = c.get('organization');
+    const result = await ownership.recover(session.userId, org.id, session.grant);
+    await membershipSync.runOrg(org.id, 20);
+    return c.json(result);
   });
   app.get('/api/organizations/:orgId/members', async (c) =>
     c.json(await workspaces.members(c.get('session').userId, c.get('organization').id)),
@@ -221,7 +293,7 @@ export function createApp(options: {
   app.get('/api/organizations/:orgId/invites', async (c) => {
     const org = c.get('organization');
     requireCondition(
-      org.role === 'owner' || org.role === 'admin',
+      (org.role === 'owner' || org.role === 'admin') && org.cloud_membership_ready !== false,
       403,
       'admin_required',
       'Only workspace admins can view invitations.',
@@ -274,11 +346,30 @@ export function createApp(options: {
       uuid.parse(c.req.param('userId')),
       input.role,
     );
+    await membershipSync.runOrg(c.get('organization').id);
     return c.json({ success: true });
   });
-  app.get('/api/organizations/:orgId/usage', async (c) =>
-    c.json(await usage.summary(c.get('session').userId, c.get('organization').id)),
+  app.get('/api/organizations/:orgId/agent-results/:runId', async (c) =>
+    c.json(
+      await usage.recordedResult(
+        c.get('session').userId,
+        c.get('organization').id,
+        z.string().min(16).max(128).parse(c.req.param('runId')),
+      ),
+    ),
   );
+  app.get('/api/organizations/:orgId/usage', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    const org = c.get('organization'),
+      session = c.get('session');
+    if (org.cloud_billing_account_id)
+      return c.json(
+        cloudAllowanceSummary(
+          await billingAccounts.snapshot(session.userId, org.id, session.grant),
+        ),
+      );
+    return c.json({ ...(await usage.summary(session.userId, org.id)), source: 'local_estimate' });
+  });
   app.get('/api/google/connections', async (c) =>
     c.json(await eliza.connections(c.get('session').grant)),
   );
@@ -289,18 +380,98 @@ export function createApp(options: {
     z.object({}).strict().parse(input);
     return c.json(await eliza.connectGoogle(c.get('session').grant));
   });
+  app.get('/api/organizations/:orgId/billing/snapshot', async (c) => {
+    c.header('Cache-Control', 'private, no-store');
+    return c.json(
+      await billingAccounts.snapshot(
+        c.get('session').userId,
+        c.get('organization').id,
+        c.get('session').grant,
+      ),
+    );
+  });
+  app.post('/api/organizations/:orgId/billing/account', async (c) => {
+    z.object({})
+      .strict()
+      .parse(await c.req.json());
+    return c.json(
+      await billingAccounts.resolveOwner(
+        c.get('session').userId,
+        c.get('organization').id,
+        c.get('session').grant,
+      ),
+    );
+  });
   app.post('/api/organizations/:orgId/billing/checkout', async (c) => {
     const input = z
       .object({ plan: z.enum(['sol', 'astra']), seats: z.number().int().min(1).max(1000) })
       .strict()
       .parse(await c.req.json());
-    return c.json(await billing.open(c.get('session').userId, c.get('organization').id, input));
+    return c.json(
+      await billing.review(
+        c.get('session').userId,
+        c.get('organization').id,
+        c.get('session').grant,
+        input,
+      ),
+    );
   });
   app.post('/api/organizations/:orgId/billing/portal', async (c) =>
-    c.json(await billing.open(c.get('session').userId, c.get('organization').id)),
+    c.json(
+      await billing.review(
+        c.get('session').userId,
+        c.get('organization').id,
+        c.get('session').grant,
+      ),
+    ),
   );
+  app.post('/api/organizations/:orgId/billing/confirm', async (c) => {
+    const input = z
+      .object({ id: z.uuid(), billingConsent: z.literal('accepted') })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(
+      await billing.confirm(
+        c.get('session').userId,
+        c.get('organization').id,
+        c.get('session').grant,
+        input.id,
+      ),
+    );
+  });
+  app.post('/api/organizations/:orgId/billing/recover', async (c) => {
+    z.object({})
+      .strict()
+      .parse(await c.req.json());
+    c.header('Cache-Control', 'private, no-store');
+    return c.json(
+      await billing.current(
+        c.get('session').userId,
+        c.get('organization').id,
+        c.get('session').grant,
+      ),
+    );
+  });
+  app.post('/api/organizations/:orgId/billing/checkout/expire', async (c) => {
+    const input = z
+      .object({ id: z.uuid() })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(
+      await billing.expireCheckout(
+        c.get('session').userId,
+        c.get('organization').id,
+        c.get('session').grant,
+        input.id,
+      ),
+    );
+  });
   app.post('/api/organizations/:orgId/billing/refresh', async (c) => {
-    await billing.reconcileMember(c.get('session').userId, c.get('organization').id);
+    await billingAccounts.snapshot(
+      c.get('session').userId,
+      c.get('organization').id,
+      c.get('session').grant,
+    );
     return c.json({ success: true });
   });
   const files = new FileStore(pool);

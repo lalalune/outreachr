@@ -1,4 +1,5 @@
 /** Reserves AI allowance before requests and retains ambiguous costs until reconciled. */
+import { completionSchema, type Completion } from './inference';
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import { lockOrganization, transaction } from './database';
@@ -11,6 +12,7 @@ interface UsageRow extends QueryResultRow {
   model: string;
   reserved_cents: number;
   settled_cents: number | null;
+  response_json: Completion | null;
   status: 'reserved' | 'completed' | 'failed' | 'ambiguous';
 }
 
@@ -64,8 +66,10 @@ export class UsageStore {
           [orgId, access.periodKey],
         )
       ).rows[0]!.cents;
+      // Cloud atomically reserves the app allowance and operator funding before inference.
+      // The local ledger retains request/response recovery and estimates, never a second buyer balance.
       requireCondition(
-        used + cents <= access.allowanceCents,
+        Boolean(org.cloud_billing_account_id) || used + cents <= access.allowanceCents,
         429,
         'ai_allowance_exhausted',
         'This request exceeds the workspace AI allowance. Reduce its scope or wait for the next billing period.',
@@ -82,7 +86,10 @@ export class UsageStore {
   async settle(
     orgId: string,
     id: string,
-    result: { status: 'completed' | 'failed'; cents: number } | { status: 'ambiguous' },
+    result:
+      | { status: 'completed'; cents: number; response?: Completion }
+      | { status: 'failed'; cents: number }
+      | { status: 'ambiguous' },
   ): Promise<void> {
     if (result.status !== 'ambiguous')
       requireCondition(
@@ -91,6 +98,17 @@ export class UsageStore {
         'invalid_cost',
         'Provider cost must be a nonnegative number of cents.',
       );
+    const response =
+      result.status === 'completed' && result.response
+        ? completionSchema.parse(result.response)
+        : null;
+    const encodedResponse = response ? JSON.stringify(response) : null;
+    requireCondition(
+      !encodedResponse || Buffer.byteLength(encodedResponse, 'utf8') <= 2_000_000,
+      413,
+      'inference_response_too_large',
+      'The model response is too large to retain.',
+    );
     await transaction(this.pool, async (client) => {
       await lockOrganization(client, orgId);
       const row = (
@@ -100,6 +118,12 @@ export class UsageStore {
         )
       ).rows[0];
       requireCondition(row, 404, 'usage_not_found', 'Usage reservation not found.');
+      requireCondition(
+        !response || response.model === row.model,
+        409,
+        'response_model_mismatch',
+        'The response does not match the reserved model.',
+      );
       const cents = result.status === 'ambiguous' ? null : result.cents;
       if (row.status === 'completed' || row.status === 'failed') {
         requireCondition(
@@ -108,14 +132,47 @@ export class UsageStore {
           'usage_already_settled',
           'Usage was already settled with a different result.',
         );
+        if (encodedResponse) {
+          const same = await client.query<{ matches: boolean }>(
+            'SELECT response_json=$2::jsonb AS matches FROM outreachr.usage WHERE id=$1',
+            [id, encodedResponse],
+          );
+          requireCondition(
+            same.rows[0]?.matches,
+            409,
+            'response_already_recorded',
+            'The original model response cannot be replaced.',
+          );
+        }
         return;
       }
       // Actual over-reservation cost remains chargeable against the allowance; never hide it.
       await client.query(
-        'UPDATE outreachr.usage SET status=$3,settled_cents=$4 WHERE id=$1 AND org_id=$2',
-        [id, orgId, result.status, cents],
+        'UPDATE outreachr.usage SET status=$3,settled_cents=$4,response_json=$5::jsonb WHERE id=$1 AND org_id=$2',
+        [id, orgId, result.status, cents, encodedResponse],
       );
     });
+  }
+
+  /** Only the original requesting member can recover the model response; this never redispatches inference. */
+  async recordedResult(userId: string, orgId: string, requestKey: string) {
+    await memberOrganization(this.pool, userId, orgId);
+    const row = (
+      await this.pool.query<UsageRow>(
+        'SELECT * FROM outreachr.usage WHERE org_id=$1 AND user_id=$2 AND request_key=$3',
+        [orgId, userId, requestKey],
+      )
+    ).rows[0];
+    requireCondition(
+      row,
+      404,
+      'inference_result_not_found',
+      'No model result was recorded for this request.',
+    );
+    return {
+      status: row.status,
+      response: row.response_json ? completionSchema.parse(row.response_json) : null,
+    };
   }
 
   async summary(userId: string, orgId: string) {

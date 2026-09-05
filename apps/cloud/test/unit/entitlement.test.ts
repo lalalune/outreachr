@@ -15,9 +15,36 @@ const org: Organization = {
   subscription_period_start: null,
   subscription_period_end: null,
   stripe_customer_id: null,
+  cloud_app_id: null,
+  cloud_billing_account_id: null,
+  cloud_billing_environment: null,
+  cloud_product_family_key: null,
   cancel_at_period_end: false,
 };
 describe('entitlements', () => {
+  it('never uses a local trial as fallback for a mapped Cloud account', () => {
+    expect(entitlement({ ...org, cloud_billing_account_id: 'account' }, now).canEdit).toBe(false);
+  });
+  it('requires a current confirmed Cloud projection and invalidates it without resetting trial dates', () => {
+    const bound = {
+      ...org,
+      cloud_billing_account_id: 'account',
+      subscription_id: 'cloud-subscription',
+      subscription_status: 'trialing',
+      cloud_billing_access: 'granted' as const,
+      cloud_billing_observed_at: now,
+      cloud_billing_valid_until: org.trial_ends_at,
+    };
+    expect(entitlement(bound, now).canEdit).toBe(true);
+    expect(entitlement({ ...bound, cloud_membership_ready: false }, now).canEdit).toBe(false);
+    expect(entitlement({ ...bound, cloud_billing_invalidated: true }, now).canEdit).toBe(false);
+    expect(entitlement({ ...bound, cloud_billing_access: 'read_only' }, now).canEdit).toBe(false);
+    expect(
+      entitlement({ ...bound, cloud_billing_observed_at: new Date(now.getTime() - 300_000) }, now)
+        .canEdit,
+    ).toBe(false);
+    expect(entitlement(bound, org.trial_ends_at!).canEdit).toBe(false);
+  });
   it('expires the trial at the exact boundary without deleting read access', () => {
     expect(entitlement(org, now).canEdit).toBe(true);
     expect(entitlement(org, org.trial_ends_at!).canEdit).toBe(false);

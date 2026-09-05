@@ -7,6 +7,14 @@ export interface Organization {
   trial_ends_at: string | null;
   subscription_status: string;
   cancel_at_period_end: boolean;
+  cloud_membership_ready?: boolean;
+  cloud_billing_account_id?: string | null;
+  cloud_ownership_confirmed?: boolean;
+  cloud_ownership_pending?: boolean;
+  cloud_provisioning_state?:
+    'pending' | 'ready' | 'ineligible' | 'failed' | 'migration_required' | null;
+  cloud_provisioning_error?: string | null;
+  created_by?: string;
   entitlement: {
     active: boolean;
     canEdit: boolean;

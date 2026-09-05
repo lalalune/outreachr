@@ -29,6 +29,13 @@ function CloudApp() {
     account?.organizations.find((item) => item.id === orgId) ??
     account?.organizations.find((item) => item.id === account.user.defaultOrgId) ??
     account?.organizations[0];
+  const membershipPending =
+    account?.organizations.some(
+      (item) =>
+        item.cloud_membership_ready === false ||
+        item.cloud_ownership_pending ||
+        item.cloud_provisioning_state === 'pending',
+    ) ?? false;
   const reload = useCallback(async () => {
     const value = await api<Account>('/api/me');
     if (new URLSearchParams(window.location.search).get('billing') === 'return') {
@@ -53,6 +60,23 @@ function CloudApp() {
       })
       .finally(() => setLoading(false));
   }, [reload]);
+  useEffect(() => {
+    const refreshAccount = () => {
+      void reload().catch((cause: unknown) => {
+        if (cause instanceof ApiError && cause.status === 401) setAccount(null);
+        else
+          setError(
+            cause instanceof Error ? cause.message : 'Account status could not be refreshed.',
+          );
+      });
+    };
+    window.addEventListener('focus', refreshAccount);
+    const timer = membershipPending ? window.setInterval(refreshAccount, 15_000) : undefined;
+    return () => {
+      window.removeEventListener('focus', refreshAccount);
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [reload, membershipPending]);
   const [bridgeOrg, setBridgeOrg] = useState('');
   useEffect(() => {
     if (org && org.id !== bridgeOrg) {
@@ -90,14 +114,14 @@ function CloudApp() {
             <strong>
               $49 <small>/ editing seat / month</small>
             </strong>
-            <p>GPT-5.6 Sol · $15 monthly AI allowance per seat</p>
+            <p>GPT-5.6 Sol · $15 monthly AI allowance per workspace</p>
           </article>
           <article>
             <h2>Astra</h2>
             <strong>
               $200 <small>/ editing seat / month</small>
             </strong>
-            <p>GPT-6 Astra · $70 monthly AI allowance per seat</p>
+            <p>GPT-6 Astra · $70 monthly AI allowance per workspace</p>
           </article>
         </div>
         <p>
@@ -198,12 +222,42 @@ function CloudApp() {
         </div>
       )}
       <div className="cloud-banner">
-        {org.entitlement.trial
-          ? `Free trial through ${new Date(org.trial_ends_at!).toLocaleDateString()}`
-          : org.entitlement.active
-            ? `${org.plan === 'sol' ? 'Sol' : 'Astra'} plan`
-            : 'Subscription required to edit, use AI, or send mail. Read and export remain available.'}
+        {org.cloud_provisioning_state === 'pending'
+          ? 'Cloud workspace setup is being confirmed. Read and export remain available.'
+          : org.cloud_provisioning_state === 'failed'
+            ? 'Cloud workspace setup could not be completed. Retry setup to continue.'
+            : org.cloud_provisioning_state === 'migration_required'
+              ? 'Existing workspace billing history needs reconciliation. Read and export remain available.'
+              : org.cloud_provisioning_state === 'ineligible'
+                ? 'The free trial has already been used. Choose a workspace subscription for editing, AI and email.'
+                : org.cloud_provisioning_state === 'ready' && org.subscription_status === 'none'
+                  ? 'Choose a workspace subscription for editing, AI and email. Read and export remain available.'
+                  : org.cloud_membership_ready === false
+                    ? 'Cloud access is synchronizing. Read and export remain available.'
+                    : org.entitlement.trial
+                      ? `Free trial through ${new Date(org.trial_ends_at!).toLocaleDateString()}`
+                      : org.entitlement.active
+                        ? `${org.plan === 'sol' ? 'Sol' : 'Astra'} plan`
+                        : 'Subscription required to edit, use AI, or send mail. Read and export remain available.'}
         {org.role === 'viewer' && ' · Viewer access'}
+        {['pending', 'failed'].includes(org.cloud_provisioning_state ?? '') &&
+          org.created_by === account.user.id && (
+            <button
+              onClick={() => {
+                void post(`/api/organizations/${org.id}/setup/retry`, {})
+                  .then(() => reload())
+                  .catch((cause: unknown) =>
+                    setError(
+                      cause instanceof Error
+                        ? cause.message
+                        : 'Cloud setup could not be confirmed.',
+                    ),
+                  );
+              }}
+            >
+              Retry workspace setup
+            </button>
+          )}
         <a href="#/settings">Manage workspace</a>
       </div>
       {bridgeOrg === org.id && (

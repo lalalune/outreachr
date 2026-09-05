@@ -2,7 +2,6 @@
 import { createHash } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-import { hasRelationshipReadScope } from '@outreachr/connectors';
 import type { ElizaClient, GoogleConnection } from './eliza';
 import { requireCondition } from './errors';
 import { lockOrganization, transaction } from './database';
@@ -35,7 +34,8 @@ export class MailboxStore {
         'Choose a connected Gmail account belonging to your Eliza account.',
       );
       requireCondition(
-        hasRelationshipReadScope('google', connection.grantedScopes),
+        connection.grantedCapabilities.includes('google.basic_identity') &&
+          connection.grantedCapabilities.includes('google.gmail.triage'),
         403,
         'mailbox_read_scope_required',
         'Reconnect Gmail in Eliza with mail reading enabled so Outreachr can check for previous contact.',

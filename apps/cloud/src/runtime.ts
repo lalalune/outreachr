@@ -1,3 +1,4 @@
+import { effectiveGoogleScopes } from './delegation';
 /** Executes the existing CRM commands against a serialized, durable workspace vault. */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -157,7 +158,7 @@ export class CloudRuntime {
               relationshipSync: true,
             },
             secretRef: 'memory://eliza-cloud-delegation',
-            scopes: mailbox.grantedScopes,
+            scopes: effectiveGoogleScopes(mailbox.grantedCapabilities),
             status: 'connected',
             createdAt: now,
             updatedAt: now,
