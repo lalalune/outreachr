@@ -63,7 +63,7 @@ export function OnboardingFlow({ cloud = false }: { cloud?: boolean } = {}): Rea
       await command('onboarding.complete', form);
       notify({
         tone: 'success',
-        title: 'Your local round is ready',
+        title: cloud ? 'Your workspace is ready' : 'Your local round is ready',
         detail: 'Pinned research seed validated and imported.',
       });
     } catch (error) {
@@ -125,7 +125,11 @@ export function OnboardingFlow({ cloud = false }: { cloud?: boolean } = {}): Rea
               <header>
                 <span>Founder profile</span>
                 <h2>Who is running this round?</h2>
-                <p>This is the only workspace role. Outreachr does not create an online account.</p>
+                <p>
+                  {cloud
+                    ? 'Set the founder profile for this workspace. Manage teammates and their roles in workspace settings.'
+                    : 'This is the only workspace role. Outreachr does not create an online account.'}
+                </p>
               </header>
               <div className="form-grid">
                 <TextField
@@ -327,8 +331,9 @@ export function OnboardingFlow({ cloud = false }: { cloud?: boolean } = {}): Rea
                   placeholder={'Street address\nCity, state ZIP\nUnited States'}
                 />
                 <span className="field__hint">
-                  Stored only in this vault and appended to new drafts. You can finish setup without
-                  it, but approval and sending stay blocked until it is configured.
+                  {cloud ? 'Stored in this workspace' : 'Stored only in this vault'} and appended to
+                  new drafts. You can finish setup without it, but approval and sending stay blocked
+                  until it is configured.
                 </span>
               </label>
             </>
@@ -343,8 +348,9 @@ export function OnboardingFlow({ cloud = false }: { cloud?: boolean } = {}): Rea
                     : 'Your local workspace is ready to build.'}
                 </h2>
                 <p>
-                  Outreachr will create the vault, validate and import the research-grade seed, and
-                  open a cited work queue. Public facts still require founder review before use.
+                  {cloud
+                    ? 'Outreachr will save your round brief and open your work queue. Review the public investor research before using it in outreach.'
+                    : 'Outreachr will create the vault, validate and import the research-grade seed, and open a cited work queue. Public facts still require founder review before use.'}
                 </p>
               </header>
               <div className="ready-summary">
@@ -386,20 +392,33 @@ export function OnboardingFlow({ cloud = false }: { cloud?: boolean } = {}): Rea
                 <div className="ready-next">
                   <Mail aria-hidden="true" />
                   <p>
-                    To sync or send, open Settings → Mail & calendar. Create a founder-owned desktop
-                    OAuth client, follow the exact callback and scope instructions, and enter its
-                    client ID. Google Desktop clients also use the dedicated client secret field. Do
-                    not enter an account password.
+                    {cloud ? (
+                      'To sync or send, open workspace settings and connect your Google account. Review the requested permissions before connecting.'
+                    ) : (
+                      <>
+                        To sync or send, open Settings → Mail & calendar. Create a founder-owned
+                        desktop OAuth client, follow the exact callback and scope instructions, and
+                        enter its client ID. Google Desktop clients also use the dedicated client
+                        secret field. Do not enter an account password.
+                      </>
+                    )}
                   </p>
                 </div>
                 <div className="ready-next">
                   <Sparkles aria-hidden="true" />
                   <p>
-                    Agents are optional. Settings → Agents supports Codex through official ChatGPT
-                    sign-in. Claude can use a founder-provided Anthropic API key or, when Anthropic
-                    has approved this deployment, an existing local Claude subscription sign-in that
-                    the founder explicitly enables. Outreachr never receives the subscription token,
-                    and setup-token credentials remain unsupported.
+                    {cloud ? (
+                      'Your workspace plan includes AI assistance. Review proposed changes before applying them to your outreach.'
+                    ) : (
+                      <>
+                        Agents are optional. Settings → Agents supports Codex through official
+                        ChatGPT sign-in. Claude can use a founder-provided Anthropic API key or,
+                        when Anthropic has approved this deployment, an existing local Claude
+                        subscription sign-in that the founder explicitly enables. Outreachr never
+                        receives the subscription token, and setup-token credentials remain
+                        unsupported.
+                      </>
+                    )}
                   </p>
                 </div>
               </div>
