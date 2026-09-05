@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/dist
+**/out
+**/release
+**/test-results
+**/playwright-report
+**/.wrangler
+**/.env*
+**/*.log

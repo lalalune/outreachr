@@ -25,3 +25,5 @@ test-results/
 *.mobileprovision
 *.outreachr-backup
 apps/desktop/resources/generated/
+
+.wrangler/

@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from './lib/router';
+import { Navigate, Route, Routes, useLocation } from './lib/router';
 import { AppShell } from './components/AppShell';
 import { ErrorScreen, LoadingScreen } from './components/ui';
 import { useWorkspace } from './state/WorkspaceContext';
@@ -19,7 +19,11 @@ import { SettingsPage } from './pages/SettingsPage';
 import { TasksPage } from './pages/TasksPage';
 import { UpNextPage } from './pages/UpNextPage';
 
-export function App(): React.JSX.Element {
+export function App({
+  settingsPage,
+  agentPage,
+}: { settingsPage?: React.ReactNode; agentPage?: React.ReactNode } = {}): React.JSX.Element {
+  const location = useLocation();
   const { data, loading, error, refreshing, refresh } = useWorkspace();
 
   if (loading) return <LoadingScreen />;
@@ -31,7 +35,8 @@ export function App(): React.JSX.Element {
         retry={() => void refresh()}
       />
     );
-  if (data.isFirstRun) return <OnboardingFlow />;
+  if (data.isFirstRun && !(settingsPage && location.pathname.startsWith('/settings')))
+    return <OnboardingFlow cloud={Boolean(settingsPage)} />;
 
   return (
     <AppShell>
@@ -45,12 +50,12 @@ export function App(): React.JSX.Element {
         <Route path="/outreach" element={<OutreachPage />} />
         <Route path="/meetings" element={<MeetingsPage />} />
         <Route path="/knowledge" element={<KnowledgePage />} />
-        <Route path="/agent" element={<AgentPage />} />
+        <Route path="/agent" element={agentPage ?? <AgentPage />} />
         <Route path="/review" element={<ReviewPage />} />
         <Route path="/lists" element={<ListsPage />} />
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/documents" element={<DocumentsPage />} />
-        <Route path="/settings/*" element={<SettingsPage />} />
+        <Route path="/settings/*" element={settingsPage ?? <SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>

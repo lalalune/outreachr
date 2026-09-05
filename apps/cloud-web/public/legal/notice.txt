@@ -1,0 +1,7 @@
+Outreachr
+Copyright 2026 Outreachr contributors
+
+This product includes investor research data with source-specific rights.
+The Apache License 2.0 covering first-party code and documentation does not
+relicense third-party facts, text, marks, images, or database rights. See the
+machine-readable seed manifest and THIRD_PARTY_NOTICES.md before redistribution.

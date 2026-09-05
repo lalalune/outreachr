@@ -17,7 +17,7 @@ import { useWorkspace } from '../state/WorkspaceContext';
 const steps = ['Founder', 'Company', 'Round', 'Privacy', 'Ready'] as const;
 const founderEmailSchema = z.string().email();
 
-export function OnboardingFlow(): React.JSX.Element {
+export function OnboardingFlow({ cloud = false }: { cloud?: boolean } = {}): React.JSX.Element {
   const { data, command, notify } = useWorkspace();
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -83,11 +83,12 @@ export function OnboardingFlow(): React.JSX.Element {
           <strong>Outreachr</strong>
         </div>
         <div className="onboarding-aside__copy">
-          <Badge tone="accent">Local-first fundraising</Badge>
+          <Badge tone="accent">{cloud ? 'Fundraising workspace' : 'Local-first fundraising'}</Badge>
           <h1>Begin with a trustworthy round brief.</h1>
           <p>
-            Outreachr imports the public investor seed, keeps private activity in one local SQLite
-            vault, and asks before any external action.
+            {cloud
+              ? 'Outreachr stores your CRM in your cloud workspace. Only workspace members can access it. You approve every external action.'
+              : 'Outreachr imports the public investor seed, keeps private activity in one local SQLite vault, and asks before any external action.'}
           </p>
         </div>
         <ol>
@@ -265,8 +266,12 @@ export function OnboardingFlow(): React.JSX.Element {
           {step === 3 ? (
             <>
               <header>
-                <span>Local privacy</span>
-                <h2>Your fundraising history stays on this device.</h2>
+                <span>{cloud ? 'Workspace privacy' : 'Local privacy'}</span>
+                <h2>
+                  {cloud
+                    ? 'Your fundraising history belongs to your workspace.'
+                    : 'Your fundraising history stays on this device.'}
+                </h2>
                 <p>
                   Provider and agent connections are optional. A real sender postal address is
                   required before Outreachr can approve or send email.
@@ -276,7 +281,7 @@ export function OnboardingFlow(): React.JSX.Element {
                 <div>
                   <Database aria-hidden="true" />
                   <span>
-                    <strong>One SQLite vault</strong>
+                    <strong>{cloud ? 'Your workspace records' : 'One SQLite vault'}</strong>
                     <small>
                       Canonical records, history, evidence, notes, drafts, and audit entries.
                     </small>
@@ -285,10 +290,11 @@ export function OnboardingFlow(): React.JSX.Element {
                 <div>
                   <LockKeyhole aria-hidden="true" />
                   <span>
-                    <strong>OS-backed secrets</strong>
+                    <strong>{cloud ? 'Eliza account connections' : 'OS-backed secrets'}</strong>
                     <small>
-                      Tokens are encrypted outside renderer access; insecure Linux fallback is
-                      rejected.
+                      {cloud
+                        ? 'Your Google credentials stay in Eliza Cloud. Outreachr uses an encrypted, revocable session.'
+                        : 'Tokens are encrypted outside renderer access; insecure Linux fallback is rejected.'}
                     </small>
                   </span>
                 </div>
@@ -331,7 +337,11 @@ export function OnboardingFlow(): React.JSX.Element {
             <>
               <header>
                 <span>Ready</span>
-                <h2>Your local workspace is ready to build.</h2>
+                <h2>
+                  {cloud
+                    ? 'Your workspace is ready to build.'
+                    : 'Your local workspace is ready to build.'}
+                </h2>
                 <p>
                   Outreachr will create the vault, validate and import the research-grade seed, and
                   open a cited work queue. Public facts still require founder review before use.
@@ -424,7 +434,7 @@ export function OnboardingFlow(): React.JSX.Element {
                 loading={saving}
                 onClick={() => void finish()}
               >
-                Create local workspace
+                {cloud ? 'Create workspace' : 'Create local workspace'}
               </Button>
             )}
           </footer>

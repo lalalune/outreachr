@@ -22,7 +22,7 @@ import {
 } from '../components/ui';
 import { useWorkspace } from '../state/WorkspaceContext';
 
-export function AgentPage(): React.JSX.Element {
+export function AgentPage({ cloudModel }: { cloudModel?: string } = {}): React.JSX.Element {
   const { data, command, notify, refresh } = useWorkspace();
   const [provider, setProvider] = useState<AgentProvider>('codex');
   const [prompt, setPrompt] = useState(
@@ -41,9 +41,12 @@ export function AgentPage(): React.JSX.Element {
       window.outreachr.onAgentEvent((event) => {
         setEvents((current) => [...current, event]);
         if (event.type === 'tool_proposal') void refresh();
-        if (event.type === 'completed' || event.type === 'error') setRunId(null);
+        if (event.type === 'completed' || event.type === 'error') {
+          setRunId(null);
+          if (cloudModel) void refresh();
+        }
       }),
-    [refresh],
+    [refresh, cloudModel],
   );
 
   const currentStatus = data?.agents.find((item) => item.provider === provider);
@@ -181,51 +184,68 @@ export function AgentPage(): React.JSX.Element {
     <div className="page agent-page">
       <PageHeader
         title="Agent"
-        description="Research and prepare work with your installed Codex or Claude agent. Outreachr remains the authority for data and sends."
+        description={
+          cloudModel
+            ? `Research and prepare work with ${cloudModel}. Review proposals before applying changes.`
+            : 'Research and prepare work with your installed Codex or Claude agent. Outreachr remains the authority for data and sends.'
+        }
       />
 
       <div className="agent-provider-switcher" role="radiogroup" aria-label="Agent provider">
-        {data.agents.map((agent) => (
-          <button
-            id={`agent-provider-${agent.provider}`}
-            role="radio"
-            aria-checked={provider === agent.provider}
-            tabIndex={provider === agent.provider ? 0 : -1}
-            key={agent.provider}
-            onClick={() => setProvider(agent.provider)}
-            onKeyDown={(event) => {
-              if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
-              event.preventDefault();
-              const currentIndex = data.agents.findIndex(
-                (item) => item.provider === agent.provider,
-              );
-              const offset = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
-              const nextAgent =
-                data.agents[(currentIndex + offset + data.agents.length) % data.agents.length];
-              if (!nextAgent) return;
-              setProvider(nextAgent.provider);
-              window.requestAnimationFrame(() =>
-                document.getElementById(`agent-provider-${nextAgent.provider}`)?.focus(),
-              );
-            }}
-          >
-            {agent.provider === 'codex' ? (
-              <Command aria-hidden="true" />
-            ) : (
-              <TerminalSquare aria-hidden="true" />
-            )}
-            <span>
-              <strong>{titleCase(agent.provider)}</strong>
-              <small>{agent.mode === 'embedded' ? 'Local Agent SDK' : 'MCP companion'}</small>
-            </span>
-            <StateDot
-              tone={
-                agent.state === 'ready' ? 'success' : agent.state === 'error' ? 'danger' : 'warning'
-              }
-              label={titleCase(agent.state)}
-            />
-          </button>
-        ))}
+        {data.agents
+          .filter((agent) => !cloudModel || agent.provider === 'codex')
+          .map((agent) => (
+            <button
+              id={`agent-provider-${agent.provider}`}
+              role="radio"
+              aria-checked={provider === agent.provider}
+              tabIndex={provider === agent.provider ? 0 : -1}
+              key={agent.provider}
+              onClick={() => setProvider(agent.provider)}
+              onKeyDown={(event) => {
+                if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key))
+                  return;
+                event.preventDefault();
+                const currentIndex = data.agents.findIndex(
+                  (item) => item.provider === agent.provider,
+                );
+                const offset = event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 1;
+                const nextAgent =
+                  data.agents[(currentIndex + offset + data.agents.length) % data.agents.length];
+                if (!nextAgent) return;
+                setProvider(nextAgent.provider);
+                window.requestAnimationFrame(() =>
+                  document.getElementById(`agent-provider-${nextAgent.provider}`)?.focus(),
+                );
+              }}
+            >
+              {agent.provider === 'codex' ? (
+                <Command aria-hidden="true" />
+              ) : (
+                <TerminalSquare aria-hidden="true" />
+              )}
+              <span>
+                <strong>{cloudModel ?? titleCase(agent.provider)}</strong>
+                <small>
+                  {cloudModel
+                    ? 'Eliza Cloud'
+                    : agent.mode === 'embedded'
+                      ? 'Local Agent SDK'
+                      : 'MCP companion'}
+                </small>
+              </span>
+              <StateDot
+                tone={
+                  agent.state === 'ready'
+                    ? 'success'
+                    : agent.state === 'error'
+                      ? 'danger'
+                      : 'warning'
+                }
+                label={titleCase(agent.state)}
+              />
+            </button>
+          ))}
       </div>
 
       <div className="agent-workbench">
@@ -241,7 +261,7 @@ export function AgentPage(): React.JSX.Element {
           <div className="agent-disclosure">
             <div className="agent-disclosure__header">
               <strong>Context for this run</strong>
-              <small>Only checked data classes are disclosed to the selected local agent.</small>
+              <small>Only checked data classes are disclosed to the selected agent.</small>
             </div>
             {contextOptions.map((option) => (
               <div className="agent-disclosure__option" key={option.id}>
@@ -296,7 +316,7 @@ export function AgentPage(): React.JSX.Element {
                 disabled={!prompt.trim() || currentStatus?.state !== 'ready'}
                 onClick={() => void run()}
               >
-                Run with {titleCase(provider)}
+                Run with {cloudModel ?? titleCase(provider)}
               </Button>
             )}
           </div>
@@ -308,7 +328,15 @@ export function AgentPage(): React.JSX.Element {
               <Sparkles aria-hidden="true" />
               <span>
                 <strong>Run output</strong>
-                <small>{runId ? 'Working locally' : events.length ? 'Completed' : 'Ready'}</small>
+                <small>
+                  {runId
+                    ? cloudModel
+                      ? 'Working'
+                      : 'Working locally'
+                    : events.length
+                      ? 'Completed'
+                      : 'Ready'}
+                </small>
               </span>
             </div>
             {runId ? <Badge tone="info">Running</Badge> : null}

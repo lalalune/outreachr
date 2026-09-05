@@ -5,6 +5,33 @@ import type { AgentRuntimeController } from './agent-controller';
 import type { ConnectorService } from './connector-service';
 import type { VaultService } from './vault-service';
 
+export type ConnectorPort = Pick<
+  ConnectorService,
+  | 'statuses'
+  | 'createMeeting'
+  | 'sendApprovedDraft'
+  | 'configure'
+  | 'connect'
+  | 'disconnect'
+  | 'test'
+  | 'syncCalendar'
+  | 'syncMail'
+>;
+export type AgentPort = Pick<
+  AgentRuntimeController,
+  | 'statuses'
+  | 'detect'
+  | 'login'
+  | 'logout'
+  | 'setCredential'
+  | 'removeCredential'
+  | 'setSubscriptionAuthApproved'
+  | 'run'
+  | 'cancel'
+  | 'beginVaultRestore'
+  | 'reloadAfterVaultRestore'
+>;
+
 const id = z.string().trim().min(1).max(300);
 const nullableIso = z.string().datetime({ offset: true }).nullable();
 const provider = z.enum(['google', 'microsoft']);
@@ -320,18 +347,22 @@ const commandSchemas: Record<keyof CommandMap, z.ZodType> = {
   search: z.object({ query: z.string().max(1_000) }),
 };
 
+export function isCommandName(value: string): value is keyof CommandMap {
+  return Object.hasOwn(commandSchemas, value);
+}
+
 export class CommandService {
   readonly #vault: VaultService;
-  readonly #connectors: ConnectorService;
-  readonly #agents: AgentRuntimeController;
+  readonly #connectors: ConnectorPort;
+  readonly #agents: AgentPort;
   readonly #emitAgentEvent: (event: AgentEvent) => void;
   #commandsInFlight = 0;
   #vaultRestoreInProgress = false;
 
   constructor(options: {
     vault: VaultService;
-    connectors: ConnectorService;
-    agents: AgentRuntimeController;
+    connectors: ConnectorPort;
+    agents: AgentPort;
     emitAgentEvent: (event: AgentEvent) => void;
   }) {
     this.#vault = options.vault;

@@ -18,6 +18,7 @@ allowBuilds:
   electron-winstaller: true
   esbuild: true
   msw: true
+  workerd: true
 
 overrides:
   js-yaml@>=4.0.0 <4.3.1: ^4.3.1

@@ -186,8 +186,12 @@ export function AppShell({ children }: PropsWithChildren): React.JSX.Element {
           <div className="vault-status">
             <Database aria-hidden="true" />
             <span>
-              <strong>Local vault</strong>
-              <small>SQLite · encrypted secrets</small>
+              <strong>{data?.hosting === 'cloud' ? 'Cloud workspace' : 'Local vault'}</strong>
+              <small>
+                {data?.hosting === 'cloud'
+                  ? 'Member access · encrypted sessions'
+                  : 'SQLite · encrypted secrets'}
+              </small>
             </span>
             <StateDot tone="success" label="Ready" />
           </div>
@@ -198,7 +202,13 @@ export function AppShell({ children }: PropsWithChildren): React.JSX.Element {
         <header className="workspace-bar">
           <div className="workspace-bar__status" role="status" aria-live="polite">
             <span className="sync-pulse" aria-hidden="true" />
-            <span>{refreshing ? 'Updating local view…' : 'Saved locally'}</span>
+            <span>
+              {refreshing
+                ? 'Updating…'
+                : data?.hosting === 'cloud'
+                  ? 'Saved to workspace'
+                  : 'Saved locally'}
+            </span>
           </div>
           <div className="workspace-bar__actions">
             <button className="agent-trigger" onClick={() => navigate('/agent')}>

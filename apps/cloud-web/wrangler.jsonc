@@ -1,0 +1,22 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "outreachr-web",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-05",
+  "account_id": "23cf6feaeaa541f6a0675053c33da768",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "outreachr.eliza.app", "custom_domain": true }],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": true,
+  },
+  "vars": { "PUBLIC_ORIGIN": "https://outreachr.eliza.app" },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.1,
+    "logs": { "enabled": true, "invocation_logs": false },
+  },
+}
