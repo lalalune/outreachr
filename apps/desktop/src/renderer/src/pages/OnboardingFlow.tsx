@@ -19,6 +19,7 @@ export function OnboardingFlow(): React.JSX.Element {
   const { data, command, notify } = useWorkspace();
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [form, setForm] = useState<FounderSetupInput>({
     founderName: '',
     founderEmail: '',
@@ -51,6 +52,7 @@ export function OnboardingFlow(): React.JSX.Element {
     setForm((current) => ({ ...current, [key]: value }));
 
   const finish = async (): Promise<void> => {
+    setSaveError(null);
     setSaving(true);
     try {
       await command('onboarding.complete', form);
@@ -59,6 +61,10 @@ export function OnboardingFlow(): React.JSX.Element {
         title: 'Your local round is ready',
         detail: 'Pinned research seed validated and imported.',
       });
+    } catch (error) {
+      setSaveError(
+        error instanceof Error ? error.message : 'The workspace could not be created. Try again.',
+      );
     } finally {
       setSaving(false);
     }
@@ -363,8 +369,9 @@ export function OnboardingFlow(): React.JSX.Element {
                   <Mail aria-hidden="true" />
                   <p>
                     To sync or send, open Settings → Mail & calendar. Create a founder-owned desktop
-                    OAuth client, follow the exact callback and scope instructions, and paste only
-                    its public client ID—never a client secret or account password.
+                    OAuth client, follow the exact callback and scope instructions, and enter its
+                    client ID. Google Desktop clients also use the dedicated client secret field. Do
+                    not enter an account password.
                   </p>
                 </div>
                 <div className="ready-next">
@@ -380,6 +387,7 @@ export function OnboardingFlow(): React.JSX.Element {
               </div>
             </>
           ) : null}
+          {saveError ? <p role="alert">{saveError}</p> : null}
           <footer className="onboarding-footer">
             <Button
               tone="quiet"
