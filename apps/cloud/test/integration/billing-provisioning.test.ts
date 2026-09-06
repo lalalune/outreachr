@@ -114,7 +114,7 @@ async function fixture() {
     );
     const backend = path.pathname.endsWith('/members') || path.pathname.endsWith('/members/sync');
     expect(headers.get('X-App-Delegation')).toBe(backend ? null : 'owner-grant');
-    if (path.pathname.endsWith('/billing/accounts')) {
+    if (path.pathname.endsWith('/billing/accounts/resolve')) {
       const request = JSON.parse(String(init?.body));
       let a = accounts.get(request.externalReference);
       if (!a) {

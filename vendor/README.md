@@ -1,11 +1,9 @@
-# Eliza Cloud SDK release candidate
+# Eliza Cloud SDK
 
-`elizaos-cloud-sdk-61bd46408cdec.tgz` is the immutable SDK package built by the
-Cloud release task from source commit `61bd46408cdec1c338f6b5cabe8f071258c1a5de`.
-The adjacent manifest records its source tree and SHA-256. The repository-relative
-dependency and lockfile allow CI and Docker to install exactly these bytes.
+`elizaos-cloud-sdk-58cbb4cae02d.tgz` is the immutable SDK package built from Cloud source
+`58cbb4cae02dc578ca0197850818d7710ceb5b4b`. The adjacent manifest records its source tree and SHA-256.
 
-This is a release candidate, not an npm publication or evidence that the matching
-Cloud API is deployed. Before replacing it, verify the new manifest and checksum,
-review the SDK contract changes, and rerun purchaser, provisioning, ownership,
-membership, inference, browser and packaged-server checks.
+It uses the generic `/billing/accounts/resolve` endpoint and requires JSON results
+for typed billing and inference operations. The archive includes the upstream MIT
+license. It is a local release candidate; it does not prove npm publication or
+availability of the matching deployed Cloud APIs.
