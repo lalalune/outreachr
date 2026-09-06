@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useWorkspace } from '../../desktop/src/renderer/src/state/WorkspaceContext';
 import { api, post } from './bridge';
 import type { Account, Organization } from './types';
@@ -41,6 +41,8 @@ export function Settings({
   const [role, setRole] = useState('viewer');
   const [inviteUrl, setInviteUrl] = useState('');
   const [error, setError] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const loadGeneration = useRef(0);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [plan, setPlan] = useState(org.plan);
@@ -63,6 +65,7 @@ export function Settings({
     org.cloud_membership_ready !== false &&
     ownershipReady;
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     const [people, pending, mailboxes, selected, usage] = await Promise.allSettled([
       api<Member[]>(`${base}/members`),
       admin ? api<Invite[]>(`${base}/invites`) : [],
@@ -72,6 +75,8 @@ export function Settings({
         `${base}/usage`,
       ),
     ]);
+    // A previous focus refresh must not replace the latest settings or its recovery state.
+    if (generation !== loadGeneration.current) return false;
     // Optional Google setup must not hide loaded membership and billing controls.
     setMembers(people.status === 'fulfilled' ? people.value : []);
     setInvites(pending.status === 'fulfilled' ? pending.value : []);
@@ -89,15 +94,19 @@ export function Settings({
           ? result.reason.message
           : 'A workspace setting could not be loaded.',
       );
-    if (failures.length) throw new Error([...new Set(failures)].join(' '));
+    setLoadError([...new Set(failures)].join(' '));
+    return failures.length === 0;
   }, [base, admin]);
   useEffect(() => {
-    void load().catch((cause: Error) => setError(cause.message));
+    void load();
     const refreshOnFocus = () => {
-      void load().catch((cause: Error) => setError(cause.message));
+      void load();
     };
     window.addEventListener('focus', refreshOnFocus);
-    return () => window.removeEventListener('focus', refreshOnFocus);
+    return () => {
+      loadGeneration.current += 1;
+      window.removeEventListener('focus', refreshOnFocus);
+    };
   }, [load]);
   async function connectGoogle() {
     const popup = window.open('about:blank', '_blank');
@@ -125,17 +134,19 @@ export function Settings({
     }
   }
   async function act(work: () => Promise<unknown>, message = 'Saved.') {
+    loadGeneration.current += 1;
     setBusy(true);
     setError('');
     setNotice('');
     try {
       const result = await work();
-      await Promise.all([load(), reload()]);
-      setNotice(
-        result && typeof result === 'object' && 'pending' in result && result.pending
-          ? 'The request is pending. Check its status to confirm the outcome.'
-          : message,
-      );
+      const [loaded] = await Promise.all([load(), reload()]);
+      if (loaded)
+        setNotice(
+          result && typeof result === 'object' && 'pending' in result && result.pending
+            ? 'The request is pending. Check its status to confirm the outcome.'
+            : message,
+        );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The request failed.');
     } finally {
@@ -148,9 +159,9 @@ export function Settings({
       <p>
         {org.name} · {account.user.email} · {org.role}
       </p>
-      {error && (
+      {(error || loadError) && (
         <p role="alert" className="cloud-error">
-          {error}
+          {error || loadError}
         </p>
       )}
       {notice && <p role="status">{notice}</p>}
