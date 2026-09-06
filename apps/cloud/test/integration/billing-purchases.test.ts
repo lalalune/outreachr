@@ -68,6 +68,7 @@ async function fixture(
     payDuringExpiry: false,
     expiryBodies: [] as string[],
     externalOperation: null as Record<string, unknown> | null,
+    recoveredOperation: null as Record<string, unknown> | null,
     reads: 0,
     quoteReads: 0,
     lost: false,
@@ -273,6 +274,8 @@ async function fixture(
             },
           },
         });
+      if (state.recoveredOperation && !state.settled)
+        return Response.json({ success: true, data: state.recoveredOperation });
       if (state.externalOperation && !state.settled)
         return Response.json({ success: true, data: state.externalOperation });
       expect(path.pathname.endsWith(state.operationId)).toBe(true);
@@ -728,3 +731,81 @@ it('keeps quoted seat changes during an unexpired trial', async () => {
   expect(f.state.quoteReads).toBe(1);
   expect(f.state.effects).toBe(0);
 });
+
+it('recovers the original setup checkout as an invoice payment action without new consent', async () => {
+  const f = await fixture(true, 'paused');
+  const review = await f
+    .store()
+    .review(f.owner.id, f.org.id, 'buyer-grant', { plan: 'sol', seats: 1 });
+  await f.store().confirm(f.owner.id, f.org.id, 'buyer-grant', review.review.id);
+  f.state.recoveredOperation = {
+    ...f.scope,
+    id: f.state.operationId,
+    status: 'requires_action',
+    action: {
+      kind: 'payment',
+      url: 'https://invoice.stripe.com/i/resume',
+      expiresAt: new Date(Date.now() + 86400_000).toISOString(),
+    },
+  };
+  expect(await f.store().current(f.owner.id, f.org.id, 'buyer-grant')).toMatchObject({
+    state: 'pending',
+    operation: { id: f.state.operationId, action: { kind: 'payment' } },
+  });
+  await expect(
+    f.store().expireCheckout(f.owner.id, f.org.id, 'buyer-grant', review.review.id),
+  ).rejects.toMatchObject({ code: 'checkout_not_open' });
+  expect(f.state.expiryEffects).toBe(0);
+  f.state.settled = true;
+  expect(await f.store().current(f.owner.id, f.org.id, 'buyer-grant')).toMatchObject({
+    state: 'complete',
+    operation: { id: f.state.operationId, status: 'succeeded' },
+  });
+  expect(f.state.effects).toBe(1);
+  expect(f.state.quoteReads).toBe(0);
+});
+
+it.each(['foreign operation', 'foreign account', 'unsafe URL', 'portal action'] as const)(
+  'rejects a setup recovery with %s and retains the original operation',
+  async (invalid) => {
+    const f = await fixture(true, 'paused');
+    const review = await f
+      .store()
+      .review(f.owner.id, f.org.id, 'buyer-grant', { plan: 'sol', seats: 1 });
+    await f.store().confirm(f.owner.id, f.org.id, 'buyer-grant', review.review.id);
+    f.state.recoveredOperation = {
+      ...f.scope,
+      id: invalid === 'foreign operation' ? randomUUID() : f.state.operationId,
+      billingAccountId: invalid === 'foreign account' ? randomUUID() : f.scope.billingAccountId,
+      status: 'requires_action',
+      action: {
+        kind: invalid === 'portal action' ? 'portal' : 'payment',
+        url:
+          invalid === 'unsafe URL'
+            ? 'https://attacker.example/invoice'
+            : invalid === 'portal action'
+              ? 'https://billing.stripe.com/p/session/fixture'
+              : 'https://invoice.stripe.com/i/resume',
+        expiresAt: new Date(Date.now() + 86400_000).toISOString(),
+      },
+    };
+    await expect(f.store().current(f.owner.id, f.org.id, 'buyer-grant')).rejects.toMatchObject({
+      code: invalid === 'unsafe URL' ? 'billing_operation_invalid' : 'billing_operation_scope',
+    });
+    const saved = (
+      await pool.query(
+        'SELECT operation_json,state FROM outreachr.cloud_billing_intents WHERE id=$1',
+        [review.review.id],
+      )
+    ).rows[0];
+    expect(saved).toMatchObject({
+      state: 'pending',
+      operation_json: { id: f.state.operationId, action: { kind: 'checkout' } },
+    });
+    f.state.recoveredOperation = null;
+    expect(await f.store().current(f.owner.id, f.org.id, 'buyer-grant')).toMatchObject({
+      operation: { id: f.state.operationId, action: { kind: 'checkout' } },
+    });
+    expect(f.state.effects).toBe(1);
+  },
+);

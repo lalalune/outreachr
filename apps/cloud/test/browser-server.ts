@@ -551,6 +551,21 @@ fixture.post('/test/billing/setup-complete', (c) => {
     receipt.operation.action.kind !== 'checkout'
   )
     return c.json({ error: 'Original setup not pending' }, 409);
+  receipt.operation = {
+    ...receipt.operation,
+    action: {
+      kind: 'payment',
+      url: 'https://invoice.stripe.com/i/resume-fixture',
+      expiresAt: new Date(Date.now() + 86400_000).toISOString(),
+    },
+  };
+  return c.json({ count: purchaseReceipts.size, operationId: receipt.operation.id });
+});
+fixture.post('/test/billing/payment-complete', (c) => {
+  if (purchaseReceipts.size !== 1) return c.json({ error: 'One original purchase required' }, 409);
+  const receipt = purchaseReceipts.values().next().value!;
+  if (receipt.operation.status !== 'requires_action' || receipt.operation.action.kind !== 'payment')
+    return c.json({ error: 'Original invoice not pending' }, 409);
   receipt.operation = { ...receipt.operation, status: 'succeeded', subscriptionRevision: '1' };
   return c.json({ count: purchaseReceipts.size, operationId: receipt.operation.id });
 });
