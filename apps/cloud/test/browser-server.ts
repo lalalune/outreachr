@@ -433,7 +433,7 @@ fixture.get('/api/v1/apps/:appId/billing/accounts/:accountId/subscriptions/works
   });
 });
 // Exercise purchaser review and ambiguous recovery with generic Cloud SDK routes.
-const purchaseReceipts = new Map<string, { body: string; operation: unknown }>();
+const purchaseReceipts = new Map<string, { body: string; operation: AppBillingOperation }>();
 fixture.get(`/api/v1/apps/${appId}/billing/catalog`, (c) =>
   c.json({
     success: true,
@@ -497,7 +497,7 @@ fixture.post(
   },
 );
 fixture.post(
-  `/api/v1/apps/${appId}/billing/accounts/${billingAccountId}/subscriptions/workspace/update`,
+  `/api/v1/apps/${appId}/billing/accounts/${billingAccountId}/subscriptions/workspace/checkout`,
   async (c) => {
     if (grants.get(c.req.header('X-App-Delegation') ?? '')?.id !== owner.id)
       return c.json({ error: 'Owner required' }, 403);
@@ -507,8 +507,12 @@ fixture.post(
       billingConsent: string;
       quantity: number;
       planRevisionId: string;
+      expectedSubscriptionRevision: string;
+      quoteId?: string;
     };
     if (
+      input.expectedSubscriptionRevision !== '1' ||
+      input.quoteId !== undefined ||
       input.billingConsent !== 'accepted' ||
       input.quantity !== 1 ||
       input.planRevisionId !== billingPlanRevisionId
@@ -527,14 +531,29 @@ fixture.post(
         billingAccountId,
         productFamilyKey: 'workspace',
         environment: 'test',
-        status: 'succeeded',
-        subscriptionRevision: '1',
+        status: 'requires_action',
+        action: {
+          kind: 'checkout',
+          url: 'https://checkout.stripe.com/c/pay/setup-fixture',
+          expiresAt: null,
+        },
       },
     });
     return c.json({ error: 'Fixture lost response after commit' }, 503);
   },
 );
 // Local-only fixture controls; providerRequest forbids external network use.
+fixture.post('/test/billing/setup-complete', (c) => {
+  if (purchaseReceipts.size !== 1) return c.json({ error: 'One original setup required' }, 409);
+  const receipt = purchaseReceipts.values().next().value!;
+  if (
+    receipt.operation.status !== 'requires_action' ||
+    receipt.operation.action.kind !== 'checkout'
+  )
+    return c.json({ error: 'Original setup not pending' }, 409);
+  receipt.operation = { ...receipt.operation, status: 'succeeded', subscriptionRevision: '1' };
+  return c.json({ count: purchaseReceipts.size, operationId: receipt.operation.id });
+});
 const expiryReceipts = new Map<string, { body: string; operation: AppBillingOperation }>();
 fixture.post('/test/billing/external-checkout', (c) => {
   externalCheckout = {
@@ -560,6 +579,8 @@ fixture.get(
       return c.json({ error: 'Owner required' }, 403);
     const id = c.req.param('operationId');
     for (const receipt of trialReceipts.values())
+      if (receipt.operation.id === id) return c.json({ success: true, data: receipt.operation });
+    for (const receipt of purchaseReceipts.values())
       if (receipt.operation.id === id) return c.json({ success: true, data: receipt.operation });
     if (externalCheckout?.id === id) return c.json({ success: true, data: externalCheckout });
     for (const receipt of expiryReceipts.values())
