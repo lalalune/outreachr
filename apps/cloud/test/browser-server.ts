@@ -117,7 +117,7 @@ fixture.use('/api/v1/apps/:appId/billing/*', async (c, next) => {
     return c.json({ error: 'Registered billing mode required' }, 403);
   await next();
 });
-fixture.post(`/api/v1/apps/${appId}/billing/accounts`, async (c) => {
+fixture.post(`/api/v1/apps/${appId}/billing/accounts/resolve`, async (c) => {
   const actor = grants.get(c.req.header('X-App-Delegation') ?? '');
   const request = await c.req.json<{ externalReference: string; displayName: string }>();
   if (actor?.id !== owner.id || request.externalReference !== fixtureOwnerWorkspace.id)

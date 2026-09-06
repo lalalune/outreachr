@@ -562,7 +562,7 @@ describe('generic purchaser account mapping', () => {
     let mode: 'success' | 'lost' | 'foreign' | 'replacement' = 'lost';
     const cloud = new ElizaClient(config, async (url, init) => {
       expect(String(url)).toBe(
-        `https://account.fixture.test/api/v1/apps/${testAppId}/billing/accounts?clientId=${config.clientId}`,
+        `https://account.fixture.test/api/v1/apps/${testAppId}/billing/accounts/resolve?clientId=${config.clientId}`,
       );
       const headers = new Headers(init?.headers);
       expect(headers.get('Authorization')).toBe(
@@ -733,7 +733,7 @@ describe('HTTP login and workspace boundary', () => {
       }
       const token = new Headers(init?.headers).get('X-App-Delegation') ?? '';
       if (!grants.has(token)) return Response.json({ error: 'Revoked' }, { status: 401 });
-      if (path.endsWith('/billing/accounts')) {
+      if (path.endsWith('/billing/accounts/resolve')) {
         const input = JSON.parse(String(init?.body));
         linkedExternalReference = input.externalReference;
         return Response.json({

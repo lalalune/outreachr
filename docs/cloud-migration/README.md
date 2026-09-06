@@ -1,42 +1,20 @@
 # Product integration ownership
 
-## Current release checkpoint: Cloud trial provisioning and portable SDK
+## SDK account-resolution contract
 
-PR #41 is merged at `c23bbcbb6f3717e764efd7ebf5a4c224badbe53c` after all required
-hosted checks passed on head `76acba09b32ec44d94869eaf704617d48ab2457f`.
-The consumer includes that main-branch performance fix.
+The app vendors Cloud SDK source `58cbb4cae02dc578ca0197850818d7710ceb5b4b`
+with SHA-256 `6f8886671cbbc1a66d9d7b4b83464043c44377ab7832fd8587c9f4999cdd011c`.
+The SDK resolves workspaces through `/api/v1/apps/{appId}/billing/accounts/resolve`.
+The consumer fixtures use that same route. The previous SDK and fixtures both
+used `/billing/accounts`, which is absent from the generic API route tree.
 
-First Cloud sign-in creates one pending default workspace without local access,
-resolves its stable billing account, and persists the exact no-card trial command
-before dispatch. Lost responses retain the original command and idempotency key.
-A successful operation alone grants no access: a fresh Cloud subscription and
-confirmed editing membership are required. Trial dates and the fixed allowance
-come from Cloud. Additional workspaces do not start trials automatically, and
-legacy unbound workspaces require reconciliation without resetting their dates.
-An unpaid owner can review the first paid subscription without already owning an
-editing seat. Explicit setup retry cannot restart a claimed or migrated trial.
+Typed billing and inference helpers reject missing response data. First sign-in
+still creates one pending workspace, persists the original trial intent before
+dispatch, and grants access only after Cloud confirms the subscription and editing
+membership. Retries preserve the workspace, trial history and command identity.
 
-Validation before the SDK replacement: 67 unit tests, 67 PostgreSQL integration
-tests and the full browser flow passed. The browser begins unbound, injects a
-lost trial response, recovers the exact command, checks canonical dates and
-continues through CRM, model and Gmail fixtures, purchaser and ownership
-recovery, read/export and mobile accessibility. This is local fixture evidence;
-real provider acceptance remains outstanding.
-
-The dependency now vendors the immutable SDK release candidate from source
-`61bd46408cdec1c338f6b5cabe8f071258c1a5de`, SHA-256
-`aadced56e98d108969c183fa7f808e2afe434d8151a623ca8edce7be75f4708b`,
-with a repository-relative dependency and manifest. This replaces earlier notes
-requiring an npm publication or a machine-local package path. Matching generic
-API/schema deployment and registered app credentials still require verification.
-The packaged SDK passed a clean frozen install, shared-package build, Cloud type
-check, web production build, 67 unit and 67 PostgreSQL integration tests, and the
-complete browser flow (24.0 seconds). Production-mode server startup, repeated
-schema migration, health revision and private proxy checks passed from the clean
-source snapshot. Worker deployment dry-run passed. The final package adds the MIT
-license and source metadata; every runtime, declaration and documentation byte
-matches the tested package. Docker itself remains a hosted CI check because the
-local Docker daemon is unavailable.
+This artifact is a local release candidate. Matching generic API deployment,
+registered client credentials and real provider acceptance remain required.
 
 Outreachr product configuration, consumer adapters, business assertions and release
 evidence belong in `lalalune/outreachr`. Eliza Cloud owns generic app registration,
