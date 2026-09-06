@@ -35,8 +35,8 @@ Offer a seven-day, no-card trial on the default workspace, once per verified
 Eliza account. Trial expiry preserves access to read and export existing data;
 editing, generation, and sending require an active entitlement. Creating another
 workspace or accepting another invite does not reset a consumed trial. The trial
-includes a bounded AI allowance. Paid allowances are per seat and pooled within
-the workspace, shown alongside remaining usage. No automatic paid overages.
+includes a bounded AI allowance. Paid allowances are fixed per workspace and shared by its members, shown
+alongside remaining usage; editing seat quantity does not multiply them. No automatic paid overages.
 
 ## Verified reuse boundaries
 
