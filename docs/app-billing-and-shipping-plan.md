@@ -1,6 +1,6 @@
 # App subscriptions on Eliza Cloud: Outreachr shipping plan
 
-Decision updated 2026-09-05 after clarifying the platform boundary. This supersedes the product-specific Cloud API design in `cloud-implementation-plan.md` and the earlier proposal to move Stripe into Outreachr.
+Decision and implementation status updated 2026-09-06. This supersedes the product-specific Cloud API design in `cloud-implementation-plan.md` and the earlier proposal to move Stripe into Outreachr.
 
 ## Commercial boundaries
 
@@ -31,22 +31,23 @@ Managed Google access also uses a generic registered-app delegation. The signed-
 - Preserve read/export access after expiry. Enforce seat capacity and the selected model on the server.
 - Current bounded AI allowance: $2 during trial, $15 per Sol workspace/month, $70 per Astra workspace/month, shared by its members with no automatic overage. These are app allowance settings, not representations of the operator's final Cloud invoice.
 
-## Source findings and implementation scope
+## Implemented consumer boundary
 
-The generic `app-auth/connect` and `app-auth/session` routes already support registered-app identity without a personal-agent subscription check. Existing app charge requests create one-time Stripe payments for credits; those payments do not implement recurring SaaS app subscriptions. The Cloud billing task is implementing the generic recurring subscription and delegation contracts.
+Outreachr uses the generic Cloud SDK for registered-app identity, delegated Google operations, app-scoped inference, and recurring subscriptions. It has no direct Stripe integration. Billing account resolution uses the generic `/billing/accounts/resolve` route.
 
-Outreachr's existing `apps/cloud/src/billing.ts` persists checkout attempts and reconciles paid state under PostgreSQL locks. Adapt it to Cloud's generic subscription authority, retaining timeout recovery, tenant checks, and fail-closed reconciliation. Remove old product-specific paths, client headers, and token assumptions from `apps/cloud/src/eliza.ts`. Keep provider credentials out of browser bundles and store delegated grants encrypted at rest.
+The consumer persists reviews and exact command bodies before submission, requires explicit purchase consent, and recovers the original command after an ambiguous response. Checkout setup alone does not grant paid access. A subsequent payment action remains visible until Cloud confirms the command, and workspace access follows the current authoritative snapshot. Open checkout cancellation also persists and recovers its original command.
 
-The already-merged product-specific Cloud bridge is temporary and must be replaced. Coordinate consumer adoption before removing its routes. The final Cloud source must contain no Outreachr-specific implementation, price names, environment bindings, or runtime schema dependencies. Handle applied database migration history safely; never rewrite a deployed migration without checking its state.
+Cloud-signed notifications invalidate the local projection; they do not grant access. Trial adoption retains existing deadlines. Membership and owner changes synchronize with Cloud authority, and paid seat changes do not refill or multiply the workspace allowance. See [trial and ownership cutover](cloud-migration/trial-and-ownership-cutover.md) for migration requirements.
 
-## Implementation and release sequence
+The vendored SDK is pinned to a source commit with a SHA-256 manifest in `vendor/`. That establishes artifact provenance, not availability of those APIs in production. The generic Cloud integration must complete its own migration, verification and deployment gates before the app can use it live. Historical product-specific migrations remain migration history; the final Cloud runtime must not depend on Outreachr-specific code.
 
-1. Freeze the two draft Google onboarding PRs while the Cloud task settles the typed generic contract. Remove the unmerged direct-Stripe edits from Outreachr.
-2. Adopt app registration, scoped credentials, delegation, Google operations, and subscription APIs in Outreachr. Declare the app's plans using Cloud's built-in provisioning path. Verify which credential pays for inference.
-3. Update local billing projections and trial migration to match the authoritative contract. Preserve existing data, trial timestamps, in-flight checkout recovery, and duplicate-send protection.
-4. Exercise the consumer against the real generic handlers as well as controlled failure fixtures. Confirm that a second app and a personal Eliza subscription cannot affect Outreachr entitlements.
-5. Complete repository verification and terminal hosted checks for the final commit, merge reviewed changes, then deploy through the existing Cloud and app release gates.
-6. Verify the deployed app using actual login, managed Google consent, both models, Stripe test-mode lifecycle, and a controlled approved email. A healthy container or mocked browser test is only intermediate evidence.
+## Remaining release sequence
+
+1. Complete the generic Cloud subscription and delegation integration, including lifecycle validation and its deployment gates. Confirm the deployed contract against the pinned consumer SDK.
+2. Resolve the operator account and app owner organization. Register the app and separate test/live confidential delegation clients using [the registration manifest](../apps/cloud/registration.manifest.json). Store issued credentials and notification keys in deployment secret stores. A locally generated secret is not a registered client credential.
+3. Provision the declared Sol and Astra plans through Cloud's generic billing setup, and configure a funded app-owned inference credential. Cloud owns the Stripe catalog and provider events.
+4. Apply the app schema and runtime-role permissions, deploy the verified BFF revision to Railway, and deploy the matching frontend and API proxy to Cloudflare. Follow [the deployment instructions](../apps/cloud/README.md#deployment).
+5. Exercise actual login, managed Google consent, both exact models, workspace isolation, and the Stripe test-mode lifecycle through the deployed app. Verify revision readback and provider outcomes. Complete the controlled email test once the sender postal address is supplied.
 
 ## Acceptance tests
 
@@ -58,43 +59,10 @@ The already-merged product-specific Cloud bridge is temporary and must be replac
 - Inference: execute both exact plan models with the operator's app credential; meter the workspace allowance and hold ambiguous reservations. The end user's personal plan or credit balance is not the payer.
 - Delivery: desktop regressions, full HTTP/browser/mobile flow, actual Linux container startup with least-privilege PostgreSQL, final revision readback, and confirmed provider results.
 
-## Current live prerequisites
+## Current verification and live prerequisites
 
-App registration and inference credentials have not been provisioned. The normal CLI login reached its authorization screen, but creation of its persistent key still awaits confirmation. Cloud Stripe test-mode access and a real sender postal address remain prerequisites for the final billing and email exercises. No live charge or email has been made as test evidence.
+The September 6 consumer validation passed 76 PostgreSQL integration tests, 67 unit tests, the complete browser fixture flow, type checking, the web build, lint, and the Worker deployment dry run. Direct computer-use checks additionally exercised trial recovery, subscription review, lost checkout response recovery, the setup-to-payment transition, and checkout cancellation recovery. These use local provider fixtures. See [the validation record](cloud-validation.md) for the evidence boundaries.
 
-## Generic delegation consumer verification, September 5
+Actual app registration, issued delegation credentials, notification keys and a funded inference credential remain outstanding. Railway CLI sign-in is confirmed, but the Outreachr service has no deployment. The Cloud dashboard restored an account different from the attempted sign-in account; ownership must be resolved before registration. A later browser readback reached a Cloud session gate whose offered reopen link returned the same gate; no current operator dashboard was recovered. The generic Cloud API integration is still undergoing central validation and is not asserted deployed here.
 
-An isolated consumer checkout now integrates the built generic Cloud SDK from
-source commit `d01cbcd49c0b2`. Artifact SHA-256:
-`960c10f3d76ff9a76bc2cd36ab173602ab0eabcaecc1f2391ba5c3b285387785`.
-The SDK is temporarily installed from a local tarball for verification only.
-Replace that dependency with an immutable released package before committing or deploying.
-
-Implemented consumer behavior:
-
-- Explicit app consent and registered auth and Google callback URIs.
-- Confidential Basic client authentication with server-only `X-App-Delegation` grants.
-- Verification of app ID, registration-pinned test/live environment, credential expiry,
-  identity capability and verified email. Free users need no Cloud organization for login.
-- Managed Google connection capabilities drive local connector permissions; no raw
-  provider scopes or credentials are assumed. Cloud checks every proxied operation.
-- Provider responses preserve receipts and pagination; ambiguous sends are not retried.
-
-Verification passed: 14 packaged-SDK contract tests through actual local HTTP,
-24 total cloud unit tests, 15 PostgreSQL integration tests and the complete browser
-fixture flow. The browser flow includes login, CRM and draft persistence, proposal
-review, Google connection and mailbox selection, export, and invited viewer isolation.
-Type checking and focused lint passed. These are controlled provider fixtures, not
-production or real email/payment acceptance.
-
-This is an intermediate migration. Generic delegated inference, signed Cloud
-notifications and authoritative snapshot refresh are now integrated. The
-purchaser adapter now uses the generic SDK with persisted review, explicit consent, and recovery of the original command. The old named billing endpoint is removed.
-Durable ordinary membership and seat activation are now integrated; owner
-transfers and original trial import remain incomplete. Authoritative usage
-reporting and Cloud allowance enforcement are now integrated locally. Existing trial deadlines and the explicit
-Review subscription flow must remain intact. No production deployment or release
-claim is valid until those pieces, immutable SDK packaging, hosted checks and live
-acceptance are complete.
-
-Cloud catalog allowance is fixed per billing account and period. Editing seat quantity affects recurring price and capacity only; proration and seat changes do not refill or multiply the allowance.
+A prior generic Cloud Stripe sandbox exercise confirmed one paid fixture invoice. It does not establish the deployed Outreachr plans, renewal, seat changes, refunds or cancellation. Those lifecycle outcomes still require acceptance against the final integrated Cloud revision. No live Outreachr email has been sent; the sender postal address remains required.
