@@ -104,5 +104,9 @@
     "Product plan names and prices belong to this app configuration; Cloud provides generic infrastructure.",
     "Use the existing authorized Cloud Stripe merchant and a funded product-owned inference credential.",
     "Store returned secrets in deployment secret stores, never in this manifest."
-  ]
+  ],
+  "billingOwner": {
+    "email": "shawmakesmagic@gmail.com",
+    "status": "User-designated owner; verify the authenticated Cloud identity and app organization ownership during registration."
+  }
 }

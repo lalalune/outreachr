@@ -6,7 +6,7 @@ This record separates consumer verification from deployed provider acceptance. T
 
 [PR #47](https://github.com/lalalune/outreachr/pull/47), head `9262e5b6f644df36f55942319a39570dce11939a`, corrects billing account resolution to `/billing/accounts/resolve` and pins the SDK artifact from Cloud source `58cbb4cae02dc578ca0197850818d7710ceb5b4b`. Its adjacent vendor manifest records the artifact hash and source provenance.
 
-The vendored SDK is built from Cloud source `d3159a0b1e7bddb90a48b511a700bf656344b67b`. Its generated route catalog removes the retired product-specific endpoints while preserving generic account resolution. See the adjacent vendor manifest for source and artifact hashes. The package does not establish that matching Cloud APIs are deployed.
+The vendored SDK is built from Cloud source `503c08fee8f3d257a0d1e629c4bc7a8bf03dcc96`. It adds the generic refund operation's `superseded` state and repairs the SDK account-resolution test fixture. Compared with the package merged in [PR #49](https://github.com/lalalune/outreachr/pull/49), only the refund administrator declaration, its declaration map, and the compiled response test differ. Outreachr does not invoke the administrator refund API. The generated route catalog continues to exclude retired product-specific endpoints. See the adjacent vendor manifest for source and artifact hashes. The package does not establish that matching Cloud APIs are deployed.
 
 Changing the provider fixtures to the canonical route exposed nine provisioning failures with the previous SDK. The corrected artifact passes:
 
