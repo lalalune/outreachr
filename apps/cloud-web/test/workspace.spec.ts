@@ -141,12 +141,22 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
   await page.getByRole('button', { name: 'Review subscription', exact: true }).click();
   const billingReview = page.getByLabel('Subscription review', { exact: true });
   await expect(billingReview).toContainText('$49.00 per month before tax');
-  await expect(billingReview).toContainText('Quoted amount due now: $0.00');
+  await expect(billingReview).toContainText('Your existing trial ends');
+  await expect(billingReview).not.toContainText('Quoted amount due now');
   await page.getByRole('button', { name: 'Dismiss review', exact: true }).click();
   await expect(billingReview).toHaveCount(0);
   await page.getByRole('button', { name: 'Review subscription', exact: true }).click();
   await page.getByRole('button', { name: 'Agree and continue', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Cloud has not confirmed this request');
+  await page.getByRole('button', { name: 'Check billing request', exact: true }).click();
+  await expect(page.getByRole('link', { name: 'Continue to checkout', exact: true })).toBeVisible();
+  // The provider fixture completes the original setup; the app must recover rather than repurchase.
+  const completedSetup = await page.request.post(
+    'http://127.0.0.1:4175/test/billing/setup-complete',
+  );
+  expect(completedSetup.ok()).toBe(true);
+  expect(await completedSetup.json()).toMatchObject({ count: 1 });
+  await page.reload();
   await page.getByRole('button', { name: 'Check billing request', exact: true }).click();
   await expect(
     page.getByRole('status').filter({ hasText: 'Cloud confirmed the billing request' }),

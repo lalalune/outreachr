@@ -386,7 +386,22 @@ export class BillingStore {
           quantity: selected.seats,
         };
         request = { ...selection, billingConsent: 'accepted' };
-        if (snapshot.mutationRevision !== null) {
+        const subscription = snapshot.subscription;
+        const paymentSetup =
+          subscription !== null &&
+          (subscription.status === 'trialing' || subscription.status === 'paused') &&
+          subscription.planRevisionId === selected.planRevisionId &&
+          subscription.quantity === selected.seats;
+        requireCondition(
+          subscription?.status !== 'paused' || paymentSetup,
+          409,
+          'billing_resume_terms_required',
+          'Resume the existing plan with its current seat count before changing the subscription.',
+        );
+        if (paymentSetup && subscription.status === 'trialing')
+          review.trialEndsAt = subscription.trial?.endsAt ?? null;
+        // Adding a card uses the existing trial's setup Checkout; quotes change its plan or seats.
+        if (snapshot.mutationRevision !== null && !paymentSetup) {
           const parsed = quoteSchema.safeParse(
             await api.quoteSubscriptionUpdate(binding.billingAccountId, this.productFamilyKey, {
               ...selection,

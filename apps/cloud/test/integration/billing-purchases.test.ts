@@ -28,7 +28,10 @@ const identity = () => ({
   name: 'Buyer fixture',
   emailVerified: true,
 });
-async function fixture(active = false) {
+async function fixture(
+  active = false,
+  subscriptionStatus: 'active' | 'trialing' | 'paused' = 'active',
+) {
   const owner = identity(),
     viewer = identity();
   const workspaces = new WorkspaceStore(pool);
@@ -101,7 +104,10 @@ async function fixture(active = false) {
       expect(headers.get('X-App-Delegation')).toBe('buyer-grant');
     } else expect(headers.get('Authorization')).toBeNull();
     expect(headers.has('X-Eliza-Developer-Authorization')).toBe(false);
-    const endsAt = new Date(Date.now() + 86400_000).toISOString();
+    const endsAt = new Date(
+      Date.now() + (subscriptionStatus === 'paused' ? -1000 : 86400_000),
+    ).toISOString();
+    const trialStartedAt = new Date(Date.parse(endsAt) - 7 * 86400_000).toISOString();
     if (path.pathname.endsWith('/catalog'))
       return Response.json({
         success: true,
@@ -155,11 +161,15 @@ async function fixture(active = false) {
                 planRevisionId,
                 planKey: 'sol',
                 revision: '8',
-                status: 'active',
+                status: subscriptionStatus,
                 quantity: 1,
-                currentPeriodStart: new Date(Date.now() - 1000).toISOString(),
+                currentPeriodStart:
+                  subscriptionStatus === 'active'
+                    ? new Date(Date.now() - 1000).toISOString()
+                    : trialStartedAt,
                 currentPeriodEnd: endsAt,
-                trial: null,
+                trial:
+                  subscriptionStatus === 'active' ? null : { startedAt: trialStartedAt, endsAt },
                 cancelAtPeriodEnd: false,
                 canceledAt: null,
               }
@@ -167,7 +177,7 @@ async function fixture(active = false) {
           entitlement: active
             ? {
                 sourceSubscriptionRevision: '8',
-                access: 'granted',
+                access: subscriptionStatus === 'paused' ? 'read_only' : 'granted',
                 featureKeys: [],
                 seatCapacity: 1,
                 assignedSeats: 1,
@@ -175,7 +185,10 @@ async function fixture(active = false) {
               }
             : null,
           allowances: [],
-          trialEligibility: { status: 'eligible' },
+          trialEligibility:
+            active && subscriptionStatus !== 'active'
+              ? { status: 'claimed', startedAt: trialStartedAt, endsAt }
+              : { status: 'eligible' },
         },
       });
     }
@@ -314,13 +327,19 @@ async function fixture(active = false) {
         id: state.operationId,
         status: 'requires_action',
         action: {
-          kind: path.pathname.endsWith('/portal') ? 'portal' : active ? 'payment' : 'checkout',
+          kind: path.pathname.endsWith('/portal')
+            ? 'portal'
+            : path.pathname.endsWith('/update')
+              ? 'payment'
+              : 'checkout',
           url: path.pathname.endsWith('/portal')
             ? 'https://billing.stripe.com/p/session/fixture'
-            : active
+            : path.pathname.endsWith('/update')
               ? 'https://invoice.stripe.com/i/fixture'
               : 'https://checkout.stripe.com/c/pay/fixture',
-          expiresAt: state.linkExpired ? '2000-01-01T00:00:00Z' : endsAt,
+          expiresAt: state.linkExpired
+            ? '2000-01-01T00:00:00Z'
+            : new Date(Date.now() + 86400_000).toISOString(),
         },
       };
       receipts.set(body.idempotencyKey, { body, operation });
@@ -570,11 +589,23 @@ it('retains and recovers an exact checkout expiry after commit/response loss acr
     f.store().current(f.owner.id, f.org.id, 'buyer-grant'),
     f.store().expireCheckout(f.owner.id, f.org.id, 'buyer-grant', review.review.id),
   ]);
-  expect(results[0]).toEqual(results[1]);
-  expect(results[0]).toMatchObject({
+  // A status read after the competing expiry commits correctly finds no pending request.
+  expect([null, results[1]]).toContainEqual(results[0]);
+  expect(results[1]).toMatchObject({
     state: 'complete',
     cancellationPending: false,
     operation: { status: 'failed', error: { code: 'APP_BILLING_CHECKOUT_EXPIRED' } },
+  });
+  const saved = (
+    await pool.query(
+      'SELECT state,cancellation_pending,operation_json FROM outreachr.cloud_billing_intents WHERE id=$1',
+      [review.review.id],
+    )
+  ).rows[0];
+  expect(saved).toEqual({
+    state: 'complete',
+    cancellation_pending: false,
+    operation_json: results[1].operation,
   });
   expect(new Set(f.state.expiryBodies).size).toBe(1);
   expect(f.state.expiryEffects).toBe(1);
@@ -640,4 +671,60 @@ it('requires a new explicit cancellation after a proven unexecuted expiry reject
   expect(f.state.expiryEffects).toBe(0);
   await f.store().expireCheckout(f.owner.id, f.org.id, 'buyer-grant', review.review.id);
   expect(f.state.expiryEffects).toBe(1);
+});
+
+it.each(['trialing', 'paused'] as const)(
+  'adds payment to the existing %s subscription and recovers the same consent after response loss',
+  async (status) => {
+    const f = await fixture(true, status);
+    const result = await f
+      .store()
+      .review(f.owner.id, f.org.id, 'buyer-grant', { plan: 'sol', seats: 1 });
+    expect(result.review).toMatchObject({
+      kind: 'checkout',
+      plan: 'sol',
+      seats: 1,
+      monthlyTotalCents: 4900,
+    });
+    expect(f.state.quoteReads).toBe(0);
+    f.state.lost = true;
+    await expect(
+      f.store().confirm(f.owner.id, f.org.id, 'buyer-grant', result.review.id),
+    ).rejects.toMatchObject({ code: 'billing_result_unconfirmed' });
+    f.state.lost = false;
+    const recovered = await f.store().current(f.owner.id, f.org.id, 'buyer-grant');
+    expect(recovered).toMatchObject({
+      state: 'pending',
+      operation: {
+        id: f.state.operationId,
+        status: 'requires_action',
+        action: { kind: 'checkout' },
+      },
+    });
+    expect(JSON.parse(f.state.bodies[0]!)).toMatchObject({
+      quantity: 1,
+      expectedSubscriptionRevision: '8',
+      billingConsent: 'accepted',
+    });
+    expect(JSON.parse(f.state.bodies[0]!)).not.toHaveProperty('quoteId');
+    expect(new Set(f.state.bodies).size).toBe(1);
+    expect(f.state.effects).toBe(1);
+    expect(f.state.quoteReads).toBe(0);
+  },
+);
+it('requires resuming the paused subscription before changing its seats', async () => {
+  const f = await fixture(true, 'paused');
+  await expect(f.review()).rejects.toMatchObject({ code: 'billing_resume_terms_required' });
+  expect(f.state.quoteReads).toBe(0);
+  expect(f.state.effects).toBe(0);
+  expect(
+    (await pool.query('SELECT id FROM outreachr.cloud_billing_intents WHERE org_id=$1', [f.org.id]))
+      .rowCount,
+  ).toBe(0);
+});
+it('keeps quoted seat changes during an unexpired trial', async () => {
+  const f = await fixture(true, 'trialing');
+  expect((await f.review()).review.kind).toBe('update');
+  expect(f.state.quoteReads).toBe(1);
+  expect(f.state.effects).toBe(0);
 });
