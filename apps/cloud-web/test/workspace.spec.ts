@@ -131,6 +131,9 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
     page.getByRole('button', { name: 'Review subscription', exact: true }),
   ).toBeEnabled();
   await page.unroute('**/api/google/connections');
+  // Returning from Cloud setup must clear the old load failure without another mutation.
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('alert')).toHaveCount(0);
   await page.getByRole('button', { name: 'Refresh connections', exact: true }).click();
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.getByText(/AI allowance used: \$0\.01 of \$2\.00/)).toBeVisible();
