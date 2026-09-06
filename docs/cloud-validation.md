@@ -6,7 +6,7 @@ This record separates consumer verification from deployed provider acceptance. T
 
 [PR #47](https://github.com/lalalune/outreachr/pull/47), head `9262e5b6f644df36f55942319a39570dce11939a`, corrects billing account resolution to `/billing/accounts/resolve` and pins the SDK artifact from Cloud source `58cbb4cae02dc578ca0197850818d7710ceb5b4b`. Its adjacent vendor manifest records the artifact hash and source provenance.
 
-The next SDK candidate is built from Cloud source `d3159a0b1e7bddb90a48b511a700bf656344b67b`. Its generated route catalog removes the retired product-specific endpoints while preserving generic account resolution. See the adjacent vendor manifest for source and artifact hashes; consumer verification is pending.
+The vendored SDK is built from Cloud source `d3159a0b1e7bddb90a48b511a700bf656344b67b`. Its generated route catalog removes the retired product-specific endpoints while preserving generic account resolution. See the adjacent vendor manifest for source and artifact hashes. The package does not establish that matching Cloud APIs are deployed.
 
 Changing the provider fixtures to the canonical route exposed nine provisioning failures with the previous SDK. The corrected artifact passes:
 
