@@ -579,7 +579,7 @@ export class BillingStore {
           (intent.kind === 'portal'
             ? operation.action.kind === 'portal'
             : intent.kind === 'checkout'
-              ? operation.action.kind === 'checkout'
+              ? operation.action.kind === 'checkout' || operation.action.kind === 'payment'
               : intent.kind === 'update' && operation.action.kind === 'payment')),
       502,
       'billing_operation_scope',

@@ -155,8 +155,22 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
     'http://127.0.0.1:4175/test/billing/setup-complete',
   );
   expect(completedSetup.ok()).toBe(true);
-  expect(await completedSetup.json()).toMatchObject({ count: 1 });
+  const setupReceipt = await completedSetup.json();
+  expect(setupReceipt).toMatchObject({ count: 1 });
   await page.reload();
+  await page.getByRole('button', { name: 'Check billing request', exact: true }).click();
+  await expect(page.getByRole('link', { name: 'Complete payment', exact: true })).toHaveAttribute(
+    'href',
+    'https://invoice.stripe.com/i/resume-fixture',
+  );
+  await expect(page.getByRole('link', { name: 'Continue to checkout', exact: true })).toHaveCount(
+    0,
+  );
+  const completedPayment = await page.request.post(
+    'http://127.0.0.1:4175/test/billing/payment-complete',
+  );
+  expect(completedPayment.ok()).toBe(true);
+  expect(await completedPayment.json()).toEqual(setupReceipt);
   await page.getByRole('button', { name: 'Check billing request', exact: true }).click();
   await expect(
     page.getByRole('status').filter({ hasText: 'Cloud confirmed the billing request' }),
