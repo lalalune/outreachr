@@ -30,6 +30,19 @@ const READ_COMMANDS = new Set<keyof CommandMap>([
   'contribution.export',
   'agent.detect',
 ]);
+const OPTIONAL_MAILBOX_ERRORS = new Set([
+  'mailbox_changed',
+  'google_account_setup_required',
+  'eliza_permission_required',
+  'eliza_request_unconfirmed',
+]);
+const PROVIDER_COMMANDS = new Set<keyof CommandMap>([
+  'draft.send',
+  'connector.test',
+  'connector.syncCalendar',
+  'connector.syncMail',
+  'meeting.create',
+]);
 const ADMIN_COMMANDS = new Set<keyof CommandMap>([
   'onboarding.complete',
   'communications.policy.update',
@@ -114,13 +127,26 @@ export class CloudRuntime {
     orgId: string,
     work: (context: RuntimeContext, command: CommandService) => Promise<T>,
     emit: (event: AgentEvent) => void = () => {},
+    mailboxAccess: 'required' | 'optional' = 'required',
   ) {
     return withWorkspaceLock(this.options.pool, orgId, async (client) => {
       const organization = await memberOrganization(client, session.userId, orgId);
       const directory = await mkdtemp(join(tmpdir(), 'outreachr-cloud-'));
       let vault: VaultService | undefined;
       try {
-        const mailbox = await this.mailboxes.current(session.userId, orgId, session.grant, client);
+        const mailbox = await this.mailboxes
+          .current(session.userId, orgId, session.grant, client)
+          .catch((error: unknown) => {
+            // Allow local workspace work when the selected Gmail connection is unavailable.
+            // Never reuse unconfirmed mailbox credentials or suppress authentication/DB errors.
+            if (
+              mailboxAccess === 'optional' &&
+              error instanceof CloudError &&
+              OPTIONAL_MAILBOX_ERRORS.has(error.code)
+            )
+              return null;
+            throw error;
+          });
         const connectorId = mailbox
           ? mailboxConnectorId(mailbox.email)
           : `connector:cloud:unconnected:${session.userId}`;
@@ -204,10 +230,17 @@ export class CloudRuntime {
   }
 
   bootstrap(session: Session, identity: Identity, orgId: string) {
-    return this.withVault(session, identity, orgId, async (_context, command) => {
-      const data = await command.bootstrap();
-      return { ...data, hosting: 'cloud' as const, vaultPath: 'Cloud workspace' };
-    });
+    return this.withVault(
+      session,
+      identity,
+      orgId,
+      async (_context, command) => {
+        const data = await command.bootstrap();
+        return { ...data, hosting: 'cloud' as const, vaultPath: 'Cloud workspace' };
+      },
+      undefined,
+      'optional',
+    );
   }
 
   execute<K extends keyof CommandMap>(
@@ -218,6 +251,9 @@ export class CloudRuntime {
     payload: unknown,
     emit?: (event: AgentEvent) => void,
   ): Promise<CommandResultMap[K]> {
+    const manualMeeting =
+      name === 'meeting.create' &&
+      z.object({ provider: z.literal('manual') }).safeParse(payload).success;
     requireCondition(
       !NATIVE_COMMANDS.has(name),
       400,
@@ -298,6 +334,7 @@ export class CloudRuntime {
         return result;
       },
       emit,
+      PROVIDER_COMMANDS.has(name) && !manualMeeting ? 'required' : 'optional',
     );
   }
 }
