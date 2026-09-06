@@ -12,7 +12,7 @@
     "build": "tsc --noEmit"
   },
   "dependencies": {
-    "@elizaos/cloud-sdk": "file:../../vendor/elizaos-cloud-sdk-58cbb4cae02d.tgz",
+    "@elizaos/cloud-sdk": "file:../../vendor/elizaos-cloud-sdk-d3159a0b1e7b.tgz",
     "@hono/node-server": "^1.19.11",
     "@outreachr/agents": "workspace:*",
     "@outreachr/connectors": "workspace:*",
