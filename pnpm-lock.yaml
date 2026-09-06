@@ -46,8 +46,8 @@ importers:
   apps/cloud:
     dependencies:
       '@elizaos/cloud-sdk':
-        specifier: file:../../vendor/elizaos-cloud-sdk-58cbb4cae02d.tgz
-        version: file:vendor/elizaos-cloud-sdk-58cbb4cae02d.tgz
+        specifier: file:../../vendor/elizaos-cloud-sdk-d3159a0b1e7b.tgz
+        version: file:vendor/elizaos-cloud-sdk-d3159a0b1e7b.tgz
       '@hono/node-server':
         specifier: ^1.19.11
         version: 1.19.17(hono@4.13.1)
@@ -632,8 +632,8 @@ packages:
     engines: {node: '>=14.14'}
     hasBin: true
 
-  '@elizaos/cloud-sdk@file:vendor/elizaos-cloud-sdk-58cbb4cae02d.tgz':
-    resolution: {integrity: sha512-PhJGqqpknH+qTi0gX9p8KzNIpPJ3tQsbixhHdKjSJm1inutq7sH6jZHQmHLmb9qZ3dzwbkbE1+N6c5otIW+NkA==, tarball: file:vendor/elizaos-cloud-sdk-58cbb4cae02d.tgz}
+  '@elizaos/cloud-sdk@file:vendor/elizaos-cloud-sdk-d3159a0b1e7b.tgz':
+    resolution: {integrity: sha512-7LUgcH37WbnTStqlfXNSrKmaQQauBp0HH1O6jMV5mb/oezp2dEcpY3DkbBIg48/lqPu8phnR9EzFeaCgrRszMw==, tarball: file:vendor/elizaos-cloud-sdk-d3159a0b1e7b.tgz}
     version: 2.0.3-beta.7
 
   '@emnapi/runtime@1.11.3':
@@ -4378,7 +4378,7 @@ snapshots:
       - supports-color
     optional: true
 
-  '@elizaos/cloud-sdk@file:vendor/elizaos-cloud-sdk-58cbb4cae02d.tgz':
+  '@elizaos/cloud-sdk@file:vendor/elizaos-cloud-sdk-d3159a0b1e7b.tgz':
     dependencies:
       yaml: 2.9.0
 
