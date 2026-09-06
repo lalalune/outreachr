@@ -14,10 +14,13 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'pnpm --dir ../cloud exec tsx test/browser-server.ts',
+      command:
+        'node --import ../cloud/node_modules/tsx/dist/loader.mjs ../cloud/test/browser-server.ts',
       url: 'http://127.0.0.1:4174/health',
       timeout: 120_000,
       reuseExistingServer: false,
+      // Let the fixture close its connections and drop its disposable database.
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
     },
     {
       command: 'pnpm exec vite --host 127.0.0.1 --port 4173',
