@@ -1,0 +1,108 @@
+{
+  "purpose": "Operator preparation only. No IDs, secrets, registration or deployment are asserted by this file. Only delegationClients entries are API request bodies.",
+  "app": {
+    "name": "Outreachr",
+    "app_url": "https://outreachr.eliza.app",
+    "allowed_origins": ["https://outreachr.eliza.app"],
+    "appId": null,
+    "ownerOrganizationId": null
+  },
+  "delegationEndpoint": "/api/v1/apps/{appId}/delegation-clients",
+  "delegationClients": {
+    "test": {
+      "billingEnvironment": "test",
+      "redirectUris": [
+        "https://outreachr.eliza.app/api/auth/callback",
+        "https://outreachr.eliza.app/api/google/callback"
+      ],
+      "allowedScopes": [
+        "identity",
+        "inference",
+        "billing:read",
+        "billing:write",
+        "google.basic_identity",
+        "google.gmail.triage",
+        "google.gmail.send",
+        "google.calendar.read",
+        "google.calendar.write"
+      ],
+      "billingReturnUrl": "https://outreachr.eliza.app/#/settings"
+    },
+    "live": {
+      "billingEnvironment": "live",
+      "redirectUris": [
+        "https://outreachr.eliza.app/api/auth/callback",
+        "https://outreachr.eliza.app/api/google/callback"
+      ],
+      "allowedScopes": [
+        "identity",
+        "inference",
+        "billing:read",
+        "billing:write",
+        "google.basic_identity",
+        "google.gmail.triage",
+        "google.gmail.send",
+        "google.calendar.read",
+        "google.calendar.write"
+      ],
+      "billingReturnUrl": "https://outreachr.eliza.app/#/settings"
+    }
+  },
+  "billingNotificationUrl": "https://outreachr.eliza.app/api/billing/notifications",
+  "catalogRequirements": {
+    "productFamilyKey": "workspace",
+    "billingModel": "monthly per editing seat; viewers free; one plan per workspace",
+    "plans": [
+      {
+        "key": "sol",
+        "amountCents": 4900,
+        "currency": "usd",
+        "interval": "month",
+        "intervalCount": 1,
+        "model": "openai/gpt-5.6-sol",
+        "allowanceUsd": "15",
+        "expiredAccess": "read_only"
+      },
+      {
+        "key": "astra",
+        "amountCents": 20000,
+        "currency": "usd",
+        "interval": "month",
+        "intervalCount": 1,
+        "model": "openai/gpt-6-astra",
+        "allowanceUsd": "70",
+        "expiredAccess": "read_only"
+      }
+    ],
+    "trial": {
+      "days": 7,
+      "paymentMethodRequired": false,
+      "allowanceUsd": "2",
+      "initialEditingSeats": 1
+    },
+    "allowanceScope": "fixed per workspace, never multiplied by seat count; operator funded; no automatic overage"
+  },
+  "deployment": {
+    "publicOrigin": "https://outreachr.eliza.app",
+    "privateBffOrigin": "https://outreachr-production.up.railway.app",
+    "railwayServiceId": "5fdf32dd-7e6c-410f-92af-8abe792a9f24",
+    "worker": "outreachr-web"
+  },
+  "operatorOutputs": {
+    "ELIZA_APP_ID": null,
+    "ELIZA_DELEGATION_CLIENT_ID": null,
+    "ELIZA_CLIENT_SECRET": null,
+    "ELIZA_PRODUCT_FAMILY_KEY": "workspace",
+    "ELIZA_BILLING_ENVIRONMENT": null,
+    "ELIZA_INFERENCE_API_KEY": null,
+    "ELIZA_BILLING_NOTIFICATION_KEYS": null
+  },
+  "constraints": [
+    "Cloud issues clientSecret once during registration; a pre-generated value does not register or authenticate the client.",
+    "Keep test and live client registrations and workspace histories separate.",
+    "Only the public Worker origin is an OAuth callback origin; the Railway BFF requires the edge secret.",
+    "Product plan names and prices belong to this app configuration; Cloud provides generic infrastructure.",
+    "Use the existing authorized Cloud Stripe merchant and a funded product-owned inference credential.",
+    "Store returned secrets in deployment secret stores, never in this manifest."
+  ]
+}

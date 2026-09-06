@@ -32,9 +32,18 @@ contract and remaining acceptance checks are in
 1. Merge and deploy the generic Cloud app subscription and delegation APIs
    through that repository's migration, staging certification, and production
    approval workflow. Adopt the finalized consumer contract before cutover.
-2. Register Outreachr with its exact HTTPS origin and requested Google
-   capabilities. Use app-scoped credentials issued by Cloud. Provider tokens
-   remain in Cloud; the BFF stores only encrypted delegated grants.
+2. Use `registration.manifest.json` for the exact public origin, callback URIs,
+   requested scopes, billing return and separate test/live registration bodies.
+   The current app owner registers a confidential client through
+   `POST /api/v1/apps/{appId}/delegation-clients`. Save the returned client ID and
+   one-time `clientSecret` as `ELIZA_DELEGATION_CLIENT_ID` and `ELIZA_CLIENT_SECRET`.
+   A locally generated client secret does not establish a Cloud registration.
+   Provider tokens remain in Cloud; the BFF stores only encrypted delegated grants.
+   The manifest's null outputs must be resolved from the authorized registration
+   and operator configuration before deployment; the file itself is not proof of
+   registration. Callback URLs use `https://outreachr.eliza.app`, where the Worker
+   proxies `/api` to Railway with the edge secret. Do not register the direct
+   Railway origin as an OAuth callback.
 3. Declare the Sol and Astra plans through Cloud's generic app billing setup:
    $49 and $200 per editing seat/month, with the agreed seven-day no-card trial.
    Cloud owns Stripe provisioning, intake, and payment verification. Outreachr
@@ -49,8 +58,8 @@ contract and remaining acceptance checks are in
    the BFF the administrative database credential.
 5. Deploy `apps/cloud/Dockerfile` to Railway with the settings in
    `apps/cloud/railway.toml` and variables listed in `.env.example`. Use a random
-   32-byte base64 session encryption key and independent random client and edge
-   secrets. `ELIZA_INFERENCE_API_KEY` must be a funded product-owned Cloud key.
+   32-byte base64 session encryption key, an independent random edge secret, and
+   the client secret issued by Cloud registration. `ELIZA_INFERENCE_API_KEY` must be a funded product-owned Cloud key.
    There is deliberately one BFF replica while cancellation uses an in-process
    run registry. Workspace persistence and send serialization are in PostgreSQL.
 6. Build the frontend and set Cloudflare Worker secrets `BFF_ORIGIN` and
