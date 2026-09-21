@@ -37,9 +37,9 @@
     "@openai/codex-sdk": "0.150.1"
   },
   "devDependencies": {
-    "@types/node": "26.4.0",
-    "@vitest/coverage-v8": "4.1.11",
+    "@types/node": "26.5.1",
+    "@vitest/coverage-v8": "5.0.0",
     "typescript": "6.0.3",
-    "vitest": "4.1.11"
+    "vitest": "5.0.0"
   }
 }
