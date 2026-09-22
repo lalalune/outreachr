@@ -11,7 +11,7 @@ import {
 } from '../../desktop/src/main/connector-service';
 import { VaultService } from '../../desktop/src/main/vault-service';
 import type { AgentEvent, CommandMap, CommandResultMap } from '../../desktop/src/shared/contracts';
-import { withWorkspaceLock } from './database';
+import { transaction, withWorkspaceLock } from './database';
 import { CloudError, requireCondition } from './errors';
 import type { ElizaClient } from './eliza';
 import { MailboxStore, mailboxConnectorId } from './mailboxes';
@@ -363,8 +363,12 @@ export class CloudRuntime {
             'Choose your own upload or an existing workspace document.',
           );
         }
-        let result = await command.execute(name, input);
-        if (document) await files.retain(session.userId, orgId, document);
+        let result = document
+          ? await transaction(client, async () => {
+              await files.retain(session.userId, orgId, document);
+              return command.execute(name, input);
+            })
+          : await command.execute(name, input);
         if (name === 'data.exportCsv') {
           const output = result as { path: string };
           result = {

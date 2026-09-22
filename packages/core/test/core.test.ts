@@ -365,6 +365,38 @@ describe('vault migrations', () => {
     reopened.close();
   });
 
+  it('preserves v11 mailbox observations while allowing identical IDs in a different account', () => {
+    const legacy = new SQL.Database();
+    for (const migration of MIGRATIONS.filter((item) => item.version <= 11)) {
+      legacy.run(migration.sql);
+      legacy.run('INSERT INTO schema_migrations(version,name,applied_at) VALUES (?,?,?)', [
+        migration.version,
+        migration.name,
+        NOW,
+      ]);
+      legacy.run(`PRAGMA user_version=${migration.version}`);
+    }
+    legacy.run(
+      `INSERT INTO mail_events(id,provider,provider_message_id,direction,kind,sender_address,occurred_at,metadata_json,created_at)
+      VALUES('old-mail','google','same-provider-id','inbound','message','sender@example.test',?,?,?)`,
+      [NOW, JSON.stringify({ accountEmail: 'Owner@Example.test' }), NOW],
+    );
+    const bytes = legacy.export();
+    legacy.close();
+    const migrated = new CoreVault(SQL, { bytes, appliedAt: LATER });
+    expect(migrated.scalar("SELECT account_email FROM mail_events WHERE id='old-mail'")).toBe(
+      'owner@example.test',
+    );
+    migrated.run(
+      `INSERT INTO mail_events(id,provider,account_email,provider_message_id,direction,kind,sender_address,occurred_at,created_at)
+      VALUES('second-mail','google','second@example.test','same-provider-id','inbound','message','sender@example.test',?,?)`,
+      [NOW, NOW],
+    );
+    expect(migrated.scalar('SELECT count(*) FROM mail_events')).toBe(2);
+    expect(migrated.integrityCheck().ok).toBe(true);
+    migrated.close();
+  });
+
   it('migrates a v6 vault with footer settings unset and revokes legacy active approvals', () => {
     const legacy = new SQL.Database();
     for (const migration of MIGRATIONS.filter((item) => item.version <= 6)) {

@@ -212,9 +212,16 @@ export class FileStore {
       'document_upload_required',
       'Choose your own upload or an existing workspace document.',
     );
-    await this.database.query(
+    if (file.expires_at === null) return;
+    const retained = await this.database.query(
       `UPDATE outreachr.files SET expires_at=NULL WHERE id=$1 AND org_id=$2 AND user_id=$3`,
       [file.id, orgId, userId],
+    );
+    requireCondition(
+      retained.rowCount,
+      409,
+      'upload_expired',
+      'This upload expired before it was saved. Upload the document again.',
     );
   }
 

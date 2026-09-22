@@ -1,6 +1,6 @@
 # Founder-owned connector credentials
 
-Outreachr has no shared cloud OAuth application. Each founder creates a public native-desktop client so the local app can request narrowly delegated access without any centrally controlled Outreachr credential. The Application/Client ID and Microsoft tenant are public configuration; an OAuth authorization code, access token, refresh token, client secret, or account password is not.
+The desktop edition uses founder-owned OAuth clients. The hosted edition uses generic Eliza Cloud app delegation; see [the hosted deployment guide](../apps/cloud/README.md). Each founder creates a public native-desktop client so the local app can request narrowly delegated access without any centrally controlled Outreachr credential. The Application/Client ID and Microsoft tenant are public configuration; an OAuth authorization code, access token, refresh token, client secret, or account password is not.
 
 Never paste an account password into Outreachr. Google Desktop clients can require the client secret issued with the client ID; enter it only in the dedicated password field. Microsoft uses a public desktop client and does not accept a client secret. Authorization runs in the system browser with PKCE, and token exchange and storage stay in the Electron main process.
 

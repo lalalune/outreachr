@@ -77,6 +77,28 @@ beforeAll(async () => {
 afterAll(() => closeTestDatabase(pool, admin, database));
 
 describe('complete cloud archives', () => {
+  it('does not retain an upload when its document command fails validation', async () => {
+    const owner = await workspace();
+    const path = await files.save(
+      owner.identity.id,
+      owner.org.id,
+      'temporary.txt',
+      Buffer.from('fixture'),
+      'upload',
+    );
+    await expect(
+      owner.run('knowledge.save', {
+        title: 'Bad reference',
+        category: 'invalid-category',
+        content: `file:${path}`,
+        sharePolicy: 'internal',
+      }),
+    ).rejects.toThrow();
+    expect((await files.get(owner.identity.id, owner.org.id, path)).expires_at).not.toBeNull();
+    const state = await runtime().bootstrap(owner.session, owner.identity, owner.org.id);
+    expect(JSON.stringify(state)).not.toContain(`file:${path}`);
+  });
+
   it('restores documents with new tenant references, strips credentials and preserves authority outside the archive', async () => {
     const source = await workspace();
     const target = await workspace();
