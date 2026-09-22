@@ -48,6 +48,7 @@ interface GraphDateTime {
 }
 
 interface GraphEventJson {
+  transactionId?: string;
   id?: string;
   subject?: string;
   body?: { contentType?: string; content?: string };
@@ -187,6 +188,7 @@ function mapGraphEvent(event: GraphEventJson, calendarId: string): CalendarEvent
     provider: 'microsoft',
     id,
     calendarId,
+    operationKey: event.transactionId,
     title: typeof event.subject === 'string' ? event.subject : '(untitled)',
     start,
     end,

@@ -1,5 +1,7 @@
 /** Provides transaction and workspace serialization boundaries for PostgreSQL. */
 import type { Pool, PoolClient } from 'pg';
+import { CloudError } from './errors';
+import { admitWorkspace } from './workspace-admission';
 
 export async function transaction<T>(
   pool: Pool | PoolClient,
@@ -9,11 +11,18 @@ export async function transaction<T>(
   const client = 'release' in pool ? pool : await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query("SET LOCAL lock_timeout = '2s'");
     const result = await work(client);
     await client.query('COMMIT');
     return result;
   } catch (error) {
     await client.query('ROLLBACK');
+    if (error && typeof error === 'object' && 'code' in error && error.code === '55P03')
+      throw new CloudError(
+        409,
+        'workspace_busy',
+        'This workspace is busy. Try again after the current operation finishes.',
+      );
     throw error;
   } finally {
     if (ownsClient) client.release();
@@ -34,14 +43,28 @@ export async function withWorkspaceLock<T>(
   orgId: string,
   work: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
-  const client = await pool.connect();
+  const releaseAdmission = await admitWorkspace(pool, orgId);
+  let client: PoolClient;
+  try {
+    client = await pool.connect();
+  } catch (error) {
+    releaseAdmission();
+    throw error;
+  }
   let locked = false;
   let broken = false;
   try {
-    await client.query("SELECT pg_advisory_lock(hashtextextended('outreachr:vault:' || $1, 0))", [
-      orgId,
-    ]);
-    locked = true;
+    const result = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtextextended('outreachr:vault:' || $1, 0)) AS locked",
+      [orgId],
+    );
+    locked = result.rows[0]?.locked === true;
+    if (!locked)
+      throw new CloudError(
+        409,
+        'workspace_busy',
+        'This workspace is busy on another worker. Try again after the current operation finishes.',
+      );
     return await work(client);
   } finally {
     if (locked) {
@@ -56,5 +79,6 @@ export async function withWorkspaceLock<T>(
       }
     }
     client.release(broken);
+    releaseAdmission();
   }
 }

@@ -65,6 +65,7 @@ interface GoogleEventDateTime {
 }
 
 interface GoogleEventJson {
+  extendedProperties?: { private?: { outreachrOperationKey?: string } };
   id?: string;
   status?: string;
   htmlLink?: string;
@@ -146,6 +147,7 @@ function mapGoogleEvent(event: GoogleEventJson, calendarId: string): CalendarEve
     provider: 'google',
     id,
     calendarId,
+    operationKey: event.extendedProperties?.private?.outreachrOperationKey,
     title: typeof event.summary === 'string' ? event.summary : '(untitled)',
     start,
     end,
@@ -336,6 +338,7 @@ export class GoogleConnector
           `${this.#gmailBaseUrl}/users/${encodeURIComponent(this.#userId)}/messages/send`,
           this.#jsonInit('POST', {
             raw: buildGmailRaw(input.message, input.safety.operationKey),
+            ...(input.context.providerThreadId ? { threadId: input.context.providerThreadId } : {}),
           }),
           true,
         );

@@ -743,12 +743,13 @@ describe('approval and send safety', () => {
     core.close();
   });
 
-  it('enforces one lifetime reservation per person and per normalized email', () => {
+  it('enforces one lifetime initial reservation per person and per normalized email', () => {
     const { vault: core, repository } = repositoryWithFounder();
     addFirmAndPeople(repository);
     message(repository, 'message-1', 'person-1', 'Partner@Calm.Example');
     repository.approveMessage('message-1', NOW, { approvalId: 'approval-1' });
     repository.reserveApprovedSend('message-1', 'google', 'ada@local.test', LATER, 'send-1');
+    repository.markSendSucceeded('send-1', 'sent-initial', LATER);
 
     repository.upsertContactMethod({
       id: 'contact-person-1-alt',
@@ -1069,7 +1070,7 @@ describe('approval and send safety', () => {
     domain.vault.close();
   });
 
-  it('enforces initial-only sends and makes automatic safety suppressions immutable', () => {
+  it('rejects unverified follow-ups and makes automatic safety suppressions immutable', () => {
     const { vault: core, repository } = repositoryWithFounder();
     addFirmAndPeople(repository);
     repository.createMessageDraft({
@@ -1087,7 +1088,9 @@ describe('approval and send safety', () => {
       createdAt: NOW,
       updatedAt: NOW,
     });
-    repository.approveMessage('message-follow-up', NOW, { approvalId: 'approval-follow-up' });
+    expect(() =>
+      repository.approveMessage('message-follow-up', NOW, { approvalId: 'approval-follow-up' }),
+    ).toThrow(/verified reply parent/i);
     expect(() =>
       repository.reserveApprovedSend(
         'message-follow-up',
@@ -1096,7 +1099,7 @@ describe('approval and send safety', () => {
         LATER,
         'send-follow-up',
       ),
-    ).toThrow(/initial outreach only/i);
+    ).toThrow(/verified reply parent/i);
 
     repository.addSuppression({
       id: 'suppression-unsubscribe',

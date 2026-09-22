@@ -1,6 +1,6 @@
 import type { Database } from 'sql.js';
 
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 11;
 
 export interface Migration {
   readonly version: number;
@@ -1137,6 +1137,102 @@ WHERE stage='passed' AND owner_note='Not now';
 CREATE TABLE local_preferences (
   key TEXT PRIMARY KEY,
   value_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`,
+  },
+  {
+    version: 10,
+    name: 'reviewed_threaded_conversations',
+    sql: `
+ALTER TABLE messages ADD COLUMN reply_parent_id TEXT;
+UPDATE approvals SET status='revoked',revoked_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE status='active';
+UPDATE messages SET state='draft' WHERE state='approved';
+CREATE TRIGGER messages_reply_parent_changed
+AFTER UPDATE OF reply_parent_id ON messages
+WHEN COALESCE(OLD.reply_parent_id,'')!=COALESCE(NEW.reply_parent_id,'')
+BEGIN
+  UPDATE approvals SET status='revoked',revoked_at=NEW.updated_at WHERE message_id=NEW.id AND status='active';
+  UPDATE messages SET state='draft' WHERE id=NEW.id AND state='approved';
+END;
+DROP INDEX send_ledger_recipient_address_once_idx;
+DROP INDEX send_ledger_recipient_person_once_idx;
+CREATE UNIQUE INDEX send_ledger_recipient_address_once_idx ON send_ledger(recipient_normalized)
+  WHERE COALESCE(message_kind,'initial') NOT IN ('follow_up','reply');
+CREATE UNIQUE INDEX send_ledger_recipient_person_once_idx ON send_ledger(recipient_person_id)
+  WHERE COALESCE(message_kind,'initial') NOT IN ('follow_up','reply');
+DROP TRIGGER send_ledger_allows_initial_only;
+DROP TRIGGER send_ledger_requires_visible_compliance_footer;
+CREATE TRIGGER send_ledger_requires_visible_compliance_footer
+BEFORE INSERT ON send_ledger
+BEGIN
+  SELECT CASE WHEN COALESCE(NEW.message_kind,'') NOT IN ('initial','follow_up','reply')
+    THEN RAISE(ABORT,'unsupported outbound message kind') END;
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM messages m,communication_settings c WHERE m.id=NEW.message_id AND c.id='global'
+      AND length(trim(COALESCE(c.postal_address,'')))>0 AND length(trim(c.opt_out_text))>0
+      AND instr(m.body_text,c.postal_address)>0 AND instr(m.body_text,c.opt_out_text)>0
+      AND json_valid(m.attachments_json) AND json_type(m.attachments_json)='array'
+      AND json_array_length(m.attachments_json)=0
+      AND (m.message_kind!='initial' OR (m.provider_thread_id IS NULL AND m.reply_parent_id IS NULL))
+  ) THEN RAISE(ABORT,'message requires the exact configured compliance footer and no attachments; initial outreach must be unthreaded') END;
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM send_ledger WHERE (recipient_person_id=NEW.recipient_person_id OR recipient_normalized=NEW.recipient_normalized)
+      AND dispatch_status IN ('reserved','dispatching','ambiguous')
+  ) THEN RAISE(ABORT,'reconcile the pending send before further contact') END;
+END;
+DROP TRIGGER send_ledger_blocks_synced_prior_outreach;
+CREATE TRIGGER send_ledger_blocks_synced_prior_outreach
+BEFORE INSERT ON send_ledger WHEN NEW.message_kind='initial'
+BEGIN
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM mail_events WHERE direction='outbound' AND (
+      person_id=NEW.recipient_person_id OR EXISTS (
+        SELECT 1 FROM json_each(recipient_addresses_json) WHERE lower(json_extract(value,'$.email'))=NEW.recipient_normalized
+      )
+    )
+  ) OR EXISTS (
+    SELECT 1 FROM send_ledger WHERE message_kind IN ('follow_up','reply')
+      AND (recipient_person_id=NEW.recipient_person_id OR recipient_normalized=NEW.recipient_normalized)
+  ) THEN RAISE(ABORT,'prior outbound history blocks another initial') END;
+END;
+CREATE TRIGGER send_ledger_requires_verified_reply_parent
+BEFORE INSERT ON send_ledger WHEN NEW.message_kind IN ('follow_up','reply')
+BEGIN
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM messages m JOIN mail_events e ON e.internet_message_id=m.reply_parent_id
+      AND e.provider=m.provider AND e.provider_thread_id=m.provider_thread_id
+      AND e.person_id=m.recipient_person_id
+    WHERE m.id=NEW.message_id AND m.provider='google'
+      AND lower(json_extract(e.metadata_json,'$.accountEmail'))=m.sender_normalized
+      AND e.kind IN ('message','reply')
+      AND ((lower(e.sender_address)=m.sender_normalized AND EXISTS (
+        SELECT 1 FROM json_each(e.recipient_addresses_json) WHERE lower(json_extract(value,'$.email'))=m.recipient_normalized
+      )) OR (lower(e.sender_address)=m.recipient_normalized AND EXISTS (
+        SELECT 1 FROM json_each(e.recipient_addresses_json) WHERE lower(json_extract(value,'$.email'))=m.sender_normalized
+      )))
+  ) THEN RAISE(ABORT,'reply requires a verified Gmail thread belonging to this mailbox and recipient') END;
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM send_ledger l JOIN messages prior ON prior.id=l.message_id JOIN messages m ON m.id=NEW.message_id
+    WHERE l.recipient_person_id=NEW.recipient_person_id AND l.provider=NEW.provider
+      AND l.sender_normalized=NEW.sender_normalized AND prior.reply_parent_id=m.reply_parent_id
+      AND l.dispatch_status!='failed_pre_dispatch'
+  ) THEN RAISE(ABORT,'this conversation message already has an approved send; sync before another follow-up') END;
+END;
+`,
+  },
+  {
+    version: 11,
+    name: 'durable_calendar_operations',
+    sql: `
+CREATE TABLE calendar_operations (
+  operation_key TEXT PRIMARY KEY,
+  provider TEXT NOT NULL CHECK(provider IN ('google','microsoft')),
+  account_email TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  event_json TEXT,
+  state TEXT NOT NULL CHECK(state IN ('dispatching','completed','ambiguous','failed_safe')),
+  created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 `,

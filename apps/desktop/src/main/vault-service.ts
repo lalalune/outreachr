@@ -431,6 +431,7 @@ interface MessageRow {
   sender_normalized: string;
   message_kind: DraftMessage['kind'];
   provider_thread_id: string | null;
+  reply_parent_id: string | null;
   subject: string;
   body_text: string;
   attachments_json: string;
@@ -885,6 +886,7 @@ export class VaultService {
       contacted: Boolean(sent),
       replied,
       canSendInitial: Boolean(email) && !sent && !suppressed,
+      suppressed: Boolean(suppressed),
       suppressionReason:
         suppressed?.reason ??
         (sent ? 'An initial message is already recorded for this canonical person.' : null),
@@ -1279,6 +1281,7 @@ export class VaultService {
           ? (String(row.kind) as MailEventItem['kind'])
           : 'message',
         subject: sqlText(row.subject),
+        threadId: typeof row.provider_thread_id === 'string' ? row.provider_thread_id : null,
         occurredAt: String(row.occurred_at),
         reviewedAt: typeof row.reviewed_at === 'string' ? row.reviewed_at : null,
       }));
@@ -1398,15 +1401,14 @@ export class VaultService {
         'Link this draft to one canonical person before approval so lifetime deduplication is enforceable.',
       );
     }
-    if (person?.suppressionReason) approvalBlockReasons.push(person.suppressionReason);
+    if (
+      person?.suppressionReason &&
+      (message.message_kind === 'initial' || person.suppressed !== false)
+    )
+      approvalBlockReasons.push(person.suppressionReason);
 
     const policy = this.#communicationPolicy();
     const sendBlockReasons = [...approvalBlockReasons];
-    if (message.message_kind !== 'initial') {
-      sendBlockReasons.push(
-        'Stock Outreachr 0.1 sends initial outreach only; keep this message local for review.',
-      );
-    }
     if (policy.sendingPaused)
       sendBlockReasons.push('All sending is paused in Communication safety.');
     if (policy.reservedToday >= policy.dailySendLimit) {
@@ -1558,6 +1560,7 @@ export class VaultService {
             senderAddress: message.sender_address,
             messageKind: message.message_kind,
             providerThreadId: message.provider_thread_id,
+            replyParentId: message.reply_parent_id,
             subject: message.subject,
             bodyText: message.body_text,
             attachments: JSON.parse(message.attachments_json),
@@ -3089,6 +3092,16 @@ export class VaultService {
           optOutText: policy.optOutText,
         })
       : input.bodyText;
+    const parent =
+      input.kind === 'follow_up' || input.kind === 'reply'
+        ? this.#repository.conversationParent({
+            provider: input.provider,
+            threadId: input.threadId ?? null,
+            senderAddress,
+            recipientAddress: person.email,
+            personId: person.id,
+          })
+        : null;
     this.#repository.createMessageDraft({
       id,
       roundId: round ? String(round.id) : null,
@@ -3099,6 +3112,7 @@ export class VaultService {
       senderAddress,
       messageKind: input.kind,
       providerThreadId: input.threadId ?? null,
+      replyParentId: parent?.internetMessageId ?? null,
       subject: input.subject,
       bodyText,
       attachments: [],
@@ -3136,6 +3150,7 @@ export class VaultService {
       senderAddress: row.sender_address,
       messageKind: row.message_kind,
       providerThreadId: row.provider_thread_id,
+      replyParentId: row.reply_parent_id,
       subject: values.subject ?? row.subject,
       bodyText: values.bodyText ?? row.body_text,
       attachments,

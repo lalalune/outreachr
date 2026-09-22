@@ -218,6 +218,12 @@ export const MessageDraftSchema = z.object({
   senderAddress: EmailSchema,
   messageKind: z.enum(['initial', 'follow_up', 'intro_request', 'reply']).default('initial'),
   providerThreadId: z.string().trim().min(1).max(2000).nullable().default(null),
+  replyParentId: z
+    .string()
+    .max(1000)
+    .regex(/^<[^<>\s]+@[^<>\s]+>$/)
+    .nullable()
+    .default(null),
   subject: z.string().trim().min(1).max(998),
   bodyText: z.string().min(1).max(500_000),
   attachments: z

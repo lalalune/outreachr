@@ -31,8 +31,9 @@ describe('ConnectorService with MSW provider boundaries', () => {
   });
   afterAll(() => server.close());
 
-  async function fixture(): Promise<{
+  async function fixture(now: () => Date = () => FIXED_NOW): Promise<{
     vault: VaultService;
+    directory: string;
     secureStore: SecureStore;
     backend: FakeSecretBackend;
     connector: ConnectorService;
@@ -40,7 +41,7 @@ describe('ConnectorService with MSW provider boundaries', () => {
   }> {
     const directory = await temporaryDirectory('connector');
     directories.push(directory);
-    const vault = await initializedVault(directory);
+    const vault = await initializedVault(directory, now);
     vaults.push(vault);
     await onboard(vault);
     const backend = new FakeSecretBackend();
@@ -51,11 +52,11 @@ describe('ConnectorService with MSW provider boundaries', () => {
       secureStore,
       openExternal,
       fetch,
-      now: () => FIXED_NOW,
+      now,
       authorizeForTest: async (request) =>
         `${request.redirectUri}?code=mock-google-code&state=${encodeURIComponent(request.state)}`,
     });
-    return { vault, secureStore, backend, connector, openExternal };
+    return { vault, directory, secureStore, backend, connector, openExternal };
   }
 
   function successfulGoogleHandlers(onSend?: (request: Request) => void): void {
@@ -824,6 +825,75 @@ describe('ConnectorService with MSW provider boundaries', () => {
     );
   });
 
+  it('recovers a calendar create after response loss and a vault restart without sending another invitation', async () => {
+    successfulGoogleHandlers();
+    let creates = 0;
+    let providerEvent: Record<string, unknown> | undefined;
+    server.use(
+      http.post(
+        'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+        async ({ request }) => {
+          creates += 1;
+          const body = (await request.json()) as Record<string, unknown>;
+          providerEvent = { ...body, id: 'durable-calendar-event', status: 'confirmed' };
+          // Provider commits the event, then returns an unusable response.
+          return HttpResponse.json({});
+        },
+      ),
+      http.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', () =>
+        HttpResponse.json({ items: providerEvent ? [providerEvent] : [] }),
+      ),
+    );
+    const { connector, vault, backend, directory } = await fixture();
+    await connector.configure({
+      provider: 'google',
+      clientId: 'founder-owned-desktop-client',
+      relationshipSync: false,
+    });
+    await connector.connect('google');
+    const person = firstPersonWithoutEmail(vault);
+    await vault.addPersonContact({
+      personId: person.id,
+      kind: 'work_email',
+      value: 'calendar-recovery@example.test',
+      visibility: 'private',
+      contributionEligible: false,
+    });
+    const input = {
+      provider: 'google' as const,
+      title: 'Durable meeting',
+      startsAt: '2026-08-04T17:00:00.000Z',
+      endsAt: '2026-08-04T17:30:00.000Z',
+      location: null,
+      agenda: 'Discuss the round',
+      notes: 'Private context',
+      investorId: person.firmId,
+      personIds: [person.id],
+    };
+    await expect(connector.createMeeting(input)).rejects.toThrow(/may have created/i);
+    expect(creates).toBe(1);
+    expect(vault.vault.scalar('SELECT state FROM calendar_operations')).toBe('ambiguous');
+    vault.vault.close();
+    vaults.splice(vaults.indexOf(vault), 1);
+    const reopened = await initializedVault(directory);
+    vaults.push(reopened);
+    const recoveredConnector = new ConnectorService({
+      vault: reopened,
+      secureStore: new SecureStore(reopened.vault, backend),
+      openExternal: async () => undefined,
+      fetch,
+      now: () => FIXED_NOW,
+    });
+    const meeting = await recoveredConnector.createMeeting(input);
+    const again = await recoveredConnector.createMeeting(input);
+    expect(again.id).toBe(meeting.id);
+    expect(creates).toBe(1);
+    expect(
+      (await reopened.bootstrap()).meetings.filter((item) => item.title === input.title),
+    ).toHaveLength(1);
+    expect(reopened.vault.scalar('SELECT state FROM calendar_operations')).toBe('completed');
+  });
+
   it('creates a Google event with selected attendees and preserves canonical local relationships', async () => {
     successfulGoogleHandlers();
     let createCalls = 0;
@@ -1396,10 +1466,115 @@ describe('ConnectorService with MSW provider boundaries', () => {
     expect(Number(vault.vault.scalar('SELECT COUNT(*) FROM send_ledger'))).toBe(0);
   });
 
-  it('blocks every non-initial message kind in stock 0.1 before mailbox or send HTTP', async () => {
-    let gmailSendCalls = 0;
+  it('sends a reviewed Gmail reply in the verified thread and blocks duplicate or altered conversation context', async () => {
+    successfulGoogleHandlers();
+    const sends: Array<{ raw: string; threadId?: string }> = [];
+    server.use(
+      http.post(
+        'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+        async ({ request }) => {
+          sends.push((await request.json()) as { raw: string; threadId?: string });
+          return HttpResponse.json({ id: `sent-${sends.length}`, threadId: 'verified-thread' });
+        },
+      ),
+    );
+    let clock = new Date(FIXED_NOW);
+    const { connector, vault } = await fixture(() => clock);
+    await connector.configure({
+      provider: 'google',
+      clientId: 'founder-owned-desktop-client',
+      relationshipSync: true,
+    });
+    await connector.connect('google');
+    vault.vault.run(
+      "UPDATE communication_settings SET recipient_domain_cooldown_minutes=1,recipient_domain_daily_limit=5 WHERE id='global'",
+    );
+    const person = firstPersonWithoutEmail(vault);
+    await vault.addPersonContact({
+      personId: person.id,
+      kind: 'work_email',
+      value: 'partner@example.test',
+      visibility: 'private',
+      contributionEligible: false,
+    });
+    const initial = await vault.createDraft({
+      personId: person.id,
+      provider: 'google',
+      kind: 'initial',
+      subject: 'Our raise',
+      bodyText: 'Would you like to discuss our round?',
+    });
+    const approvedInitial = await vault.approveDraft(initial.id, initial.contentHash);
+    await connector.sendApprovedDraft(approvedInitial.id, approvedInitial.contentHash);
+    await vault.importMailboxMessages('google', 'founder@local.test', [
+      {
+        provider: 'google',
+        id: 'sent-1',
+        internetMessageId: '<original@example.test>',
+        threadId: 'verified-thread',
+        subject: 'Our raise',
+        from: { email: 'founder@local.test' },
+        to: [{ email: 'partner@example.test' }],
+        occurredAt: FIXED_NOW.toISOString(),
+        direction: 'outbound',
+      },
+      {
+        provider: 'google',
+        id: 'received-1',
+        internetMessageId: '<reply@example.test>',
+        threadId: 'verified-thread',
+        subject: 'Re: Our raise',
+        from: { email: 'partner@example.test' },
+        to: [{ email: 'founder@local.test' }],
+        occurredAt: new Date(FIXED_NOW.getTime() + 1000).toISOString(),
+        direction: 'inbound',
+      },
+    ]);
+    clock = new Date(clock.getTime() + 120_000);
+    const input = {
+      personId: person.id,
+      provider: 'google' as const,
+      kind: 'reply' as const,
+      threadId: 'verified-thread',
+      subject: 'Re: Our raise',
+      bodyText: 'Yes, Tuesday works. Thank you.',
+    };
+    await expect(vault.createDraft({ ...input, threadId: 'someone-elses-thread' })).rejects.toThrow(
+      /no verified conversation/i,
+    );
+    const draft = await vault.createDraft(input);
+    const changed = await vault.updateDraft(draft.id, { subject: 'An unrelated subject' });
+    await expect(vault.approveDraft(changed.id, changed.contentHash)).rejects.toThrow(
+      /subject unchanged/i,
+    );
+    const restored = await vault.updateDraft(draft.id, { subject: input.subject });
+    const approved = await vault.approveDraft(restored.id, restored.contentHash);
+    expect(approved.canSend).toBe(true);
+    await connector.sendApprovedDraft(approved.id, approved.contentHash);
+    expect(sends).toHaveLength(2);
+    expect(sends[0]!.threadId).toBeUndefined();
+    expect(sends[1]!.threadId).toBe('verified-thread');
+    const mime = Buffer.from(sends[1]!.raw, 'base64url').toString('utf8');
+    expect(mime).toContain('In-Reply-To: <reply@example.test>');
+    expect(mime).toContain('References: <reply@example.test>');
+    expect(mime).toContain('To:');
+    expect(mime).toContain('partner@example.test');
+    clock = new Date(clock.getTime() + 120_000);
+    const duplicate = await vault.createDraft(input);
+    const approvedDuplicate = await vault.approveDraft(duplicate.id, duplicate.contentHash);
+    await expect(
+      connector.sendApprovedDraft(approvedDuplicate.id, approvedDuplicate.contentHash),
+    ).rejects.toThrow(/already has an approved send/i);
+    expect(sends).toHaveLength(2);
+    await expect(
+      vault.createDraft({ ...input, kind: 'initial', threadId: undefined }),
+    ).rejects.toThrow(/initial message is already recorded/i);
+  });
+
+  it('rejects a follow-up with no verified mailbox thread before any send HTTP', async () => {
+    let sends = 0;
     successfulGoogleHandlers(() => {
-      gmailSendCalls += 1;
+      sends += 1;
     });
     const { connector, vault } = await fixture();
     await connector.configure({
@@ -1412,24 +1587,20 @@ describe('ConnectorService with MSW provider boundaries', () => {
     await vault.addPersonContact({
       personId: person.id,
       kind: 'work_email',
-      value: 'follow-up-block@example.test',
+      value: 'no-thread@example.test',
       visibility: 'private',
       contributionEligible: false,
     });
-    const draft = await vault.createDraft({
-      personId: person.id,
-      provider: 'google',
-      kind: 'follow_up',
-      subject: 'Follow-up remains local',
-      bodyText: 'Outreachr 0.1 must not send this externally.',
-    });
-    const approved = await vault.approveDraft(draft.id, draft.contentHash);
-
-    await expect(connector.sendApprovedDraft(approved.id, approved.contentHash)).rejects.toThrow(
-      'sends initial outreach only',
-    );
-    expect(gmailSendCalls).toBe(0);
-    expect(Number(vault.vault.scalar('SELECT COUNT(*) FROM send_ledger'))).toBe(0);
+    await expect(
+      vault.createDraft({
+        personId: person.id,
+        provider: 'google',
+        kind: 'follow_up',
+        subject: 'Follow up',
+        bodyText: 'Follow up without verified history.',
+      }),
+    ).rejects.toThrow(/synchronized Gmail conversation/i);
+    expect(sends).toBe(0);
   });
 
   it('rejects a forged OAuth state and records a useful non-secret error', async () => {

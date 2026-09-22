@@ -22,6 +22,28 @@ export function OutreachPage(): React.JSX.Element {
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
+  const [conversation, setConversation] = useState<{
+    personId: string;
+    threadId: string;
+    subject: string;
+    kind: 'reply' | 'follow_up';
+  } | null>(null);
+  const [conversationBody, setConversationBody] = useState('');
+  const beginConversation = (
+    personId: string,
+    threadId: string,
+    originalSubject: string,
+    kind: 'reply' | 'follow_up',
+  ) => {
+    setSelected(null);
+    setConversationBody('');
+    setConversation({
+      personId,
+      threadId,
+      subject: /^re:/i.test(originalSubject) ? originalSubject : `Re: ${originalSubject}`,
+      kind,
+    });
+  };
   const [filter, setFilter] = useState<'all' | 'draft' | 'approved' | 'sent' | 'attention'>('all');
 
   const counts = useMemo(
@@ -247,6 +269,16 @@ export function OutreachPage(): React.JSX.Element {
                     </small>
                   </span>
                   <div>
+                    {event.kind === 'reply' && event.provider === 'google' && event.threadId && (
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          beginConversation(event.personId, event.threadId!, event.subject, 'reply')
+                        }
+                      >
+                        Draft reply
+                      </Button>
+                    )}
                     {event.investorId ? (
                       <Button
                         tone="quiet"
@@ -374,6 +406,62 @@ export function OutreachPage(): React.JSX.Element {
       </Section>
 
       <Dialog
+        open={Boolean(conversation)}
+        title="Draft conversation message"
+        onClose={() => {
+          if (!busy) setConversation(null);
+        }}
+        footer={
+          <>
+            <Button disabled={busy} onClick={() => setConversation(null)}>
+              Cancel
+            </Button>
+            <Button
+              loading={busy}
+              disabled={!conversationBody.trim()}
+              onClick={() => {
+                if (!conversation || busy) return;
+                setBusy(true);
+                void command('draft.create', {
+                  ...conversation,
+                  provider: 'google',
+                  bodyText: conversationBody,
+                })
+                  .then((draft) => {
+                    setConversation(null);
+                    setSelected(draft);
+                    setSubject(draft.subject);
+                    setBody(draft.bodyText);
+                    notify({ tone: 'success', title: 'Conversation draft ready for review' });
+                  })
+                  .catch(() => {
+                    /* WorkspaceContext displays command failures. */
+                  })
+                  .finally(() => setBusy(false));
+              }}
+            >
+              Save conversation draft
+            </Button>
+          </>
+        }
+      >
+        <p>
+          This replies only to the selected person in their verified Gmail thread. Sync your mailbox
+          first. Saving a draft does not send it.
+        </p>
+        <p>
+          <strong>{conversation?.subject}</strong>
+        </p>
+        <label className="field">
+          <span className="field__label">Conversation body</span>
+          <textarea
+            className="textarea message-body"
+            value={conversationBody}
+            onChange={(event) => setConversationBody(event.target.value)}
+          />
+        </label>
+      </Dialog>
+      <Dialog
         open={Boolean(selected)}
         onClose={() => {
           if (!busy) setSelected(null);
@@ -390,6 +478,22 @@ export function OutreachPage(): React.JSX.Element {
               <Button tone="quiet" disabled={busy} onClick={() => setSelected(null)}>
                 Close
               </Button>
+              {selected.approvalState === 'sent' &&
+                selected.provider === 'google' &&
+                selected.threadId && (
+                  <Button
+                    onClick={() =>
+                      beginConversation(
+                        selected.personId,
+                        selected.threadId!,
+                        selected.subject,
+                        'follow_up',
+                      )
+                    }
+                  >
+                    Draft follow-up
+                  </Button>
+                )}
               {selected.approvalState === 'draft' ? (
                 <Button
                   icon={<Edit3 aria-hidden="true" />}

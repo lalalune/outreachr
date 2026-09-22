@@ -263,7 +263,7 @@ describe('workspace authority', () => {
     await withWorkspaceLock(pool, org.id, (client) =>
       postgresVaultPersistence(client, org.id).save(Buffer.from('0')),
     );
-    await Promise.all(
+    const outcomes = await Promise.allSettled(
       Array.from({ length: 8 }, () =>
         withWorkspaceLock(pool, org.id, async (client) => {
           const persistence = postgresVaultPersistence(client, org.id);
@@ -272,6 +272,17 @@ describe('workspace authority', () => {
         }),
       ),
     );
+    expect(outcomes.filter((result) => result.status === 'fulfilled')).toHaveLength(4);
+    for (const result of outcomes) {
+      if (result.status !== 'rejected') continue;
+      expect(result.reason).toMatchObject({ code: 'workspace_busy' });
+      // Rejected admissions have not executed work, so a caller can explicitly retry.
+      await withWorkspaceLock(pool, org.id, async (client) => {
+        const persistence = postgresVaultPersistence(client, org.id);
+        const count = Number(Buffer.from((await persistence.load())!).toString());
+        await persistence.save(Buffer.from(String(count + 1)));
+      });
+    }
     expect(
       await withWorkspaceLock(pool, org.id, async (client) =>
         Buffer.from((await postgresVaultPersistence(client, org.id).load())!).toString(),

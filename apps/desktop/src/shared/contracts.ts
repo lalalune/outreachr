@@ -104,6 +104,7 @@ export interface PersonSummary {
   replied: boolean;
   canSendInitial: boolean;
   suppressionReason: string | null;
+  suppressed?: boolean;
   lastInteractionAt: string | null;
   nextAction: string | null;
 }
@@ -210,6 +211,7 @@ export interface MailEventItem {
   investorId: string | null;
   direction: 'inbound' | 'outbound';
   kind: 'message' | 'reply' | 'bounce' | 'hard_bounce' | 'complaint' | 'unsubscribe';
+  threadId?: string | null;
   subject: string;
   occurredAt: string;
   reviewedAt: string | null;

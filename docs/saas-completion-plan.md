@@ -32,3 +32,10 @@ Implementation in progress. Completed first slice:
 - API request limits cover streamed bodies; diagnostics include generated request identifiers and redacted route/status/timing.
 - Cloud and desktop type checks passed; 78 Cloud PostgreSQL integration tests passed; expanded Chromium journey passed on its first run (30.6 seconds), covering file upload/reload/removal and invitation landing.
 - Remaining work packages and external service acceptance are still open.
+
+Second slice:
+
+- Reviewed Gmail replies and follow-ups bind the original mailbox, recipient, thread, subject and RFC Message-ID into approval. Duplicate parent sends, unrelated threads and a second initial contact are rejected. Existing approvals are revoked by the schema upgrade.
+- Calendar creation persists its operation before provider dispatch and reconciles uncertain results after restart without another create request.
+- Workspace admission bounds same-workspace waiting outside the PostgreSQL pool; concurrent workers reject contention without holding provider calls in a database transaction.
+- Connector integration: 22 tests passed, including threaded sends and restart recovery. Cloud integration: 78 passed, including bounded contention and retried writes.

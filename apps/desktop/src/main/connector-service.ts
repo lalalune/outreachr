@@ -2,6 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
+  ConnectorError,
   createLoopbackRedirectUri,
   exchangeAuthorizationCode,
   fingerprintEmail,
@@ -826,34 +827,99 @@ export class ConnectorService {
   async createMeeting(input: Omit<MeetingItem, 'id'>): Promise<MeetingItem> {
     if (input.provider === 'manual') return this.#vault.createMeeting(input);
     const connector = this.#calendarConnector(input.provider);
-    const event = await connector.createEvent({
+    const account = this.#config(input.provider)?.accountLabel;
+    if (!account) throw new Error('Connect the intended calendar account first.');
+    const request = {
       title: input.title,
       start: { dateTime: input.startsAt },
       end: { dateTime: input.endsAt },
       ...(input.location ? { location: input.location } : {}),
       ...(input.agenda ? { description: input.agenda, descriptionType: 'text' as const } : {}),
-      attendees: this.#vault.calendarAttendees(input.personIds).map((attendee) => ({
-        email: attendee.email,
-        ...(attendee.name ? { name: attendee.name } : {}),
-      })),
-      operationKey: `meeting:${randomUUID()}`,
-    });
-    const bootstrap = await this.#vault.importCalendarEvents(input.provider, [event]);
-    const meeting = bootstrap.meetings.find(
-      (item) =>
-        item.provider === input.provider &&
-        item.title === event.title &&
-        item.startsAt === (event.start.dateTime ?? input.startsAt),
+      attendees: this.#vault
+        .calendarAttendees(input.personIds)
+        .map((attendee) => ({
+          email: attendee.email,
+          ...(attendee.name ? { name: attendee.name } : {}),
+        }))
+        .sort((a, b) => a.email.localeCompare(b.email)),
+    };
+    // Exact meeting intent and mailbox identify one operation across requests and restarts.
+    const operationKey = `meeting:${createHash('sha256')
+      .update(
+        JSON.stringify({ provider: input.provider, account: normalizeEmail(account), request }),
+      )
+      .digest('hex')}`;
+    const existing = this.#vault.vault.one<{ state: string; event_json: string | null }>(
+      'SELECT state,event_json FROM calendar_operations WHERE operation_key=?',
+      [operationKey],
     );
-    if (!meeting)
+    let event: CalendarEvent | undefined = existing?.event_json
+      ? (JSON.parse(existing.event_json) as CalendarEvent)
+      : undefined;
+    if (!event && existing && existing.state !== 'failed_safe') {
+      let pageToken: string | undefined;
+      const seen = new Set<string>();
+      for (let page = 0; page < 100; page += 1) {
+        const result = await connector.listEvents({
+          timeMin: input.startsAt,
+          timeMax: input.endsAt,
+          pageSize: 250,
+          ...(pageToken ? { pageToken } : {}),
+        });
+        event = result.events.find((candidate) => candidate.operationKey === operationKey);
+        if (event || !result.nextPageToken || seen.has(result.nextPageToken)) break;
+        seen.add(result.nextPageToken);
+        pageToken = result.nextPageToken;
+      }
+      if (!event)
+        throw new Error(
+          'The calendar outcome is still unconfirmed. No second invitation was sent. Retry reconciliation after the provider recovers.',
+        );
+    }
+    if (!event) {
+      const now = this.#now().toISOString();
+      this.#vault.vault.run(
+        `INSERT INTO calendar_operations(operation_key,provider,account_email,request_json,state,created_at,updated_at)
+         VALUES(?,?,?,?,'dispatching',?,?) ON CONFLICT(operation_key) DO UPDATE SET state='dispatching',updated_at=excluded.updated_at`,
+        [operationKey, input.provider, normalizeEmail(account), JSON.stringify(request), now, now],
+      );
+      await this.#vault.persist();
+      try {
+        event = await connector.createEvent({ ...request, operationKey });
+      } catch (error) {
+        this.#vault.vault.run(
+          'UPDATE calendar_operations SET state=?,updated_at=? WHERE operation_key=?',
+          [
+            error instanceof ConnectorError && !error.mayHaveSucceeded
+              ? 'failed_safe'
+              : 'ambiguous',
+            this.#now().toISOString(),
+            operationKey,
+          ],
+        );
+        await this.#vault.persist();
+        throw error;
+      }
+    }
+    this.#vault.vault.run(
+      "UPDATE calendar_operations SET state='completed',event_json=?,updated_at=? WHERE operation_key=?",
+      [JSON.stringify(event), this.#now().toISOString(), operationKey],
+    );
+    await this.#vault.persist();
+    await this.#vault.importCalendarEvents(input.provider, [event]);
+    const meetingId = this.#vault.vault.scalar(
+      'SELECT id FROM meetings WHERE external_calendar_id=?',
+      [`${input.provider}:${event.id}`],
+    );
+    if (typeof meetingId !== 'string')
       throw new Error(
-        'Calendar event was created but could not be stored locally; run calendar sync to reconcile it',
+        'Calendar event is recorded but local import needs reconciliation. Retry this exact meeting.',
       );
     // Persist the founder's explicit canonical relationships after importing the
     // provider event. Provider payloads receive name/email only; local person IDs
     // never leave the vault.
     return this.#vault.updateMeeting({
-      id: meeting.id,
+      id: meetingId,
       agenda: input.agenda,
       notes: input.notes,
       investorId: input.investorId,
@@ -932,11 +998,12 @@ export class ConnectorService {
       sender_normalized: string;
       message_kind: DraftMessage['kind'];
       provider_thread_id: string | null;
+      reply_parent_id: string | null;
       subject: string;
       body_text: string;
       attachments_json: string;
     }>(
-      'SELECT id,recipient_person_id,recipient_address,provider,sender_address,sender_normalized,message_kind,provider_thread_id,subject,body_text,attachments_json FROM messages WHERE id=?',
+      'SELECT id,recipient_person_id,recipient_address,provider,sender_address,sender_normalized,message_kind,provider_thread_id,reply_parent_id,subject,body_text,attachments_json FROM messages WHERE id=?',
       [id],
     );
     if (!message) throw new Error('Draft not found');
@@ -945,9 +1012,8 @@ export class ConnectorService {
       throw new Error('Message content changed after approval');
     if (draft.approvalState !== 'approved')
       throw new Error('Exact founder approval is required before sending');
-    if (message.message_kind !== 'initial') {
-      throw new Error('Outreachr 0.1 sends initial outreach only');
-    }
+    if (!['initial', 'follow_up', 'reply'].includes(message.message_kind))
+      throw new Error('Unsupported outbound message kind');
     const provider = message.provider;
     const approval = this.#vault.vault.one<{
       id: string;
@@ -1007,6 +1073,9 @@ export class ConnectorService {
       ],
       subject: message.subject,
       text: message.body_text,
+      ...(message.reply_parent_id
+        ? { inReplyTo: message.reply_parent_id, references: [message.reply_parent_id] }
+        : {}),
     };
     const context: SendContext = {
       provider,
