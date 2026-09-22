@@ -481,6 +481,7 @@ export interface CommandMap {
   'task.update': { id: string; status?: TaskItem['status']; title?: string; dueAt?: string | null };
   'meeting.create': Omit<MeetingItem, 'id'>;
   'meeting.update': { id: string; agenda: string | null; notes: string | null };
+  'knowledge.remove': { id: string };
   'knowledge.save': Omit<KnowledgeItem, 'id' | 'updatedAt'> & { id?: string };
   'list.create': {
     name: string;
@@ -577,6 +578,7 @@ export interface CommandResultMap {
   'task.update': TaskItem;
   'meeting.create': MeetingItem;
   'meeting.update': MeetingItem;
+  'knowledge.remove': { success: true };
   'knowledge.save': KnowledgeItem;
   'list.create': ListItem;
   'list.update': ListItem;
@@ -620,7 +622,23 @@ export interface CommandResultMap {
   }>;
 }
 
+export interface WorkspaceFileInventory {
+  files: Array<{
+    id: string;
+    name: string;
+    bytes: number;
+    expiresAt: string | null;
+    canRemove: boolean;
+  }>;
+  usedBytes: number;
+  limitBytes: number;
+}
+
 export interface OutreachrBridge {
+  cloudFiles?: {
+    list: () => Promise<WorkspaceFileInventory>;
+    remove: (handle: string) => Promise<void>;
+  };
   bootstrap: () => Promise<AppBootstrap>;
   command: <K extends keyof CommandMap>(
     command: K,

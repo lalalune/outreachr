@@ -1,4 +1,5 @@
 /** Routes browser sessions and workspace operations behind same-origin and membership checks. */
+import { randomUUID } from 'node:crypto';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { stream } from 'hono/streaming';
 import { isCommandName } from '../../desktop/src/main/command-service';
@@ -41,7 +42,12 @@ export interface CloudConfig {
   revision: string;
 }
 interface CloudEnv {
-  Variables: { session: Session; organization: Organization; identity: Identity };
+  Variables: {
+    session: Session;
+    organization: Organization;
+    identity: Identity;
+    requestId: string;
+  };
 }
 const uuid = z.string().uuid();
 const role = z.enum(['owner', 'admin', 'member', 'viewer']);
@@ -75,11 +81,29 @@ export function createApp(options: {
   const cookie = { httpOnly: true, secure: config.production, sameSite: 'Lax' as const, path: '/' };
 
   app.use('/api/billing/notifications', bodyLimit({ maxSize: 65_536 }));
-  app.use('*', bodyLimit({ maxSize: MAX_FILE_BYTES + 1024 }));
+  app.use('*', (c, next) =>
+    bodyLimit({
+      maxSize: c.req.path.endsWith('/files') ? MAX_FILE_BYTES : 2_000_000,
+      onError: () => c.json({ error: 'Request too large.', code: 'request_too_large' }, 413),
+    })(c, next),
+  );
   app.use('*', async (c, next) => {
-    if (!c.req.path.endsWith('/files') && Number(c.req.header('content-length') ?? 0) > 2_000_000)
-      throw new CloudError(413, 'request_too_large', 'Request too large.');
+    const requestId = randomUUID();
+    c.set('requestId', requestId);
+    c.header('X-Request-Id', requestId);
+    const started = Date.now();
     await next();
+    if (c.req.path !== '/health')
+      process.stdout.write(
+        `${JSON.stringify({
+          event: 'request.completed',
+          requestId,
+          method: c.req.method,
+          route: c.req.routePath,
+          status: c.res.status,
+          durationMs: Date.now() - started,
+        })}\n`,
+      );
   });
   app.use('*', async (c, next) => {
     c.header('Cache-Control', 'no-store');
@@ -122,7 +146,7 @@ export function createApp(options: {
       );
     // Server diagnostics omit request bodies, credentials, and raw provider errors.
     process.stderr.write(
-      `${JSON.stringify({ event: 'request.failed', path: c.req.path, errorType: error.name })}\n`,
+      `${JSON.stringify({ event: 'request.failed', requestId: c.get('requestId'), route: c.req.routePath, errorType: error.name })}\n`,
     );
     return c.json({ error: 'The request could not be completed.', code: 'internal_error' }, 500);
   });
@@ -146,7 +170,10 @@ export function createApp(options: {
     deleteCookie(c, stateCookie, cookie);
     const code = z.string().startsWith('eac_').max(256).parse(c.req.query('code'));
     const grant = await eliza.exchange(code);
-    await workspaces.signIn(grant.user);
+    await workspaces.signIn(
+      grant.user,
+      !new URL(returnPath, config.publicOrigin).searchParams.has('invite'),
+    );
     const oldToken = getCookie(c, sessionCookie);
     if (oldToken) await sessions.revoke(oldToken);
     const session = await sessions.create(grant.user.id, grant.token, new Date(grant.expiresAt));
@@ -187,7 +214,7 @@ export function createApp(options: {
       'identity_changed',
       'Sign in again to confirm your account.',
     );
-    const result = await workspaces.signIn(identity);
+    const result = await workspaces.signIn(identity, false);
     const organizations = await Promise.all(
       result.organizations.map(async (org) => {
         await provisioning.resume(session.userId, org.id, session.grant);
@@ -230,7 +257,7 @@ export function createApp(options: {
       'identity_changed',
       'Sign in again to confirm your account.',
     );
-    await workspaces.signIn(identity);
+    await workspaces.signIn(identity, false);
     const accepted = await workspaces.acceptInvite(session.userId, input.token);
     await membershipSync.runOrg(accepted.id);
     return c.json(await memberOrganization(pool, session.userId, accepted.id));
@@ -475,6 +502,9 @@ export function createApp(options: {
     return c.json({ success: true });
   });
   const files = new FileStore(pool);
+  app.get('/api/organizations/:orgId/files', async (c) =>
+    c.json(await files.list(c.get('session').userId, c.get('organization').id)),
+  );
   app.post('/api/organizations/:orgId/files', async (c) => {
     const content = Buffer.from(await c.req.arrayBuffer());
     return c.json(

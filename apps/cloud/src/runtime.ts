@@ -265,7 +265,10 @@ export class CloudRuntime {
       identity,
       orgId,
       async ({ organization, client, directory }, command) => {
-        if (!READ_COMMANDS.has(name))
+        if (
+          !READ_COMMANDS.has(name) &&
+          !(name === 'knowledge.remove' && organization.role !== 'viewer')
+        )
           requireCondition(
             entitlement(organization, new Date()).canEdit,
             403,
@@ -310,7 +313,26 @@ export class CloudRuntime {
             input = { ...value, directory };
           }
         }
+        // Validate a document reference before persisting it. New uploads expire unless linked.
+        const document =
+          name === 'knowledge.save'
+            ? z
+                .object({ content: z.string() })
+                .parse(input)
+                .content.match(/^file:(cloud-file:[0-9a-f-]{36})$/)?.[1]
+            : undefined;
+        if (document) {
+          const file = await files.get(session.userId, orgId, document);
+          requireCondition(
+            file.purpose === 'upload' &&
+              (file.user_id === session.userId || file.expires_at === null),
+            403,
+            'document_upload_required',
+            'Choose your own upload or an existing workspace document.',
+          );
+        }
         let result = await command.execute(name, input);
+        if (document) await files.retain(session.userId, orgId, document);
         if (name === 'data.exportCsv' || name === 'backup.export') {
           const output = result as { path: string };
           result = {

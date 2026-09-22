@@ -2928,6 +2928,23 @@ export class VaultService {
     return this.#suppressions().find((item) => item.id === id)!;
   }
 
+  async removeKnowledge(id: string): Promise<{ success: true }> {
+    this.#vault.transaction(() => {
+      this.#vault.run('DELETE FROM knowledge_items WHERE id=?', [id]);
+      appendAuditEntry(this.#vault, {
+        occurredAt: this.#now().toISOString(),
+        actorType: 'founder',
+        actorId: this.#options.actorId ?? 'founder',
+        action: 'knowledge.removed',
+        entityType: 'knowledge',
+        entityId: id,
+        detail: {},
+      });
+    });
+    await this.persist();
+    return { success: true };
+  }
+
   async saveKnowledge(
     input: Omit<KnowledgeItem, 'id' | 'updatedAt'> & { id?: string },
   ): Promise<KnowledgeItem> {

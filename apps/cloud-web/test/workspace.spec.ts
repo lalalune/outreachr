@@ -66,6 +66,36 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
   await page.getByRole('button', { name: 'Create workspace', exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 1000 });
   const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  await navigation.getByRole('link', { name: 'Documents', exact: true }).click();
+  await expect(
+    page.getByText('Upload documents to this workspace or track external links.', { exact: false }),
+  ).toBeVisible();
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Upload workspace document', exact: true }).click();
+  await (
+    await chooser
+  ).setFiles({
+    name: 'Founder Deck.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4 controlled fixture'),
+  });
+  await expect(page.getByText('Document uploaded', { exact: true })).toBeVisible();
+  await expect(
+    page.locator('.document-list strong').filter({ hasText: 'Founder Deck.pdf' }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.locator('.document-list strong').filter({ hasText: 'Founder Deck.pdf' }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Remove file', exact: true }).click();
+  await page
+    .getByRole('dialog', { name: 'Remove workspace file?' })
+    .getByRole('button', { name: 'Remove file', exact: true })
+    .click();
+  await expect(page.getByText('Workspace file removed', { exact: true })).toBeVisible();
+  await expect(
+    page.locator('.document-list strong').filter({ hasText: 'Founder Deck.pdf' }),
+  ).toHaveCount(0);
   await navigation.getByRole('link', { name: 'Investors', exact: true }).click();
   await page.getByRole('button', { name: 'Add investor', exact: true }).click();
   const firm = page.getByRole('dialog', { name: 'Add an investor' });
@@ -243,9 +273,9 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
   await viewer.getByRole('link', { name: 'Continue with Eliza' }).click();
   await viewer.getByRole('link', { name: 'Sign in as Viewer' }).click();
   await viewer.getByRole('button', { name: 'Accept invitation', exact: true }).click();
-  await viewer
-    .getByRole('combobox', { name: 'Workspace', exact: true })
-    .selectOption({ label: 'Test Owner workspace' });
+  await expect(viewer.getByRole('combobox', { name: 'Workspace', exact: true })).toHaveValue(
+    confirmedOrg.id,
+  );
   await expect(viewer.getByText(/Viewer access/)).toBeVisible();
   const acceptedAccount = await (
     await viewer.request.get(new URL('/api/me', viewer.url()).href)
@@ -253,6 +283,7 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
   const acceptedWorkspace = acceptedAccount.organizations.find(
     (org: { name: string }) => org.name === 'Test Owner workspace',
   );
+  expect(acceptedAccount.organizations).toHaveLength(1);
   expect(acceptedWorkspace.cloud_membership_ready).toBe(true);
   expect(acceptedWorkspace.entitlement.canEdit).toBe(false);
   expect(acceptedWorkspace.seat_capacity).toBe(1);

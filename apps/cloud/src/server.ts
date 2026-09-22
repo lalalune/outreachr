@@ -1,4 +1,5 @@
 /** Starts the cloud BFF with explicit credentials and an already-migrated database. */
+import { FileStore } from './files';
 import { serve } from '@hono/node-server';
 import { Pool } from 'pg';
 import { z } from 'zod';
@@ -122,6 +123,23 @@ const drainMemberships = async () => {
     syncingMemberships = false;
   }
 };
+let cleaning = false;
+const cleanupTimer = setInterval(() => {
+  if (cleaning) return;
+  cleaning = true;
+  void (async () => {
+    await new FileStore(pool).cleanup();
+    await pool.query('DELETE FROM outreachr.login_states WHERE expires_at < now()');
+    await pool.query('DELETE FROM outreachr.sessions WHERE expires_at < now()');
+  })()
+    .catch(() => {
+      process.stderr.write('Expired workspace resource cleanup failed.\n');
+    })
+    .finally(() => {
+      cleaning = false;
+    });
+}, 60_000);
+cleanupTimer.unref();
 const membershipTimer = setInterval(() => {
   void drainMemberships();
 }, 15_000);
@@ -131,6 +149,7 @@ process.stdout.write(`Outreachr cloud listening on port ${env.PORT}, revision ${
 for (const signal of ['SIGINT', 'SIGTERM'] as const)
   process.once(signal, () => {
     clearInterval(membershipTimer);
+    clearInterval(cleanupTimer);
     server.close(() => {
       void pool.end().then(() => process.exit(0));
     });

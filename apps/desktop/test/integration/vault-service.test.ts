@@ -58,6 +58,32 @@ describe('VaultService with the production investor seed', () => {
     await Promise.all(directories.splice(0).map(removeTemporaryDirectory));
   });
 
+  it('removes a document reference with an audit record while keeping unrelated knowledge', async () => {
+    const { service } = await create();
+    const document = await service.saveKnowledge({
+      title: 'Deck',
+      content: 'file:cloud-file:00000000-0000-4000-8000-000000000001',
+      category: 'company',
+      sharePolicy: 'meeting_only',
+    });
+    const note = await service.saveKnowledge({
+      title: 'Narrative',
+      content: 'Keep this context',
+      category: 'narrative',
+      sharePolicy: 'internal',
+    });
+    await service.removeKnowledge(document.id);
+    const data = await service.bootstrap();
+    expect(data.knowledge.some((item) => item.id === document.id)).toBe(false);
+    expect(data.knowledge.some((item) => item.id === note.id)).toBe(true);
+    expect(
+      service.vault.scalar(
+        "SELECT count(*) FROM audit_log WHERE action='knowledge.removed' AND entity_id=?",
+        [document.id],
+      ),
+    ).toBe(1);
+  });
+
   it('batches evidence reads for the full seed and observes subsequent edits', async () => {
     const { service } = await create();
     const reads = vi.spyOn(service.vault, 'all');

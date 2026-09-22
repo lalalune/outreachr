@@ -56,6 +56,25 @@ beforeAll(async () => {
 afterAll(() => closeTestDatabase(pool, admin, database));
 
 describe('workspace authority', () => {
+  it('joins an invitation without provisioning an unrelated workspace or consuming a trial', async () => {
+    const owner = identity();
+    const guest = identity();
+    const org = (await store.signIn(owner)).organizations[0]!;
+    const signedIn = await store.signIn(guest, false);
+    expect(signedIn.organizations).toEqual([]);
+    expect(signedIn.user.trial_claimed_at).toBeNull();
+    const invitation = await store.invite(owner.id, org.id, guest.email, 'viewer');
+    await store.acceptInvite(guest.id, invitation.token);
+    const returning = await store.signIn(guest, false);
+    expect(returning.organizations.map((item) => item.id)).toEqual([org.id]);
+    expect(returning.user.default_org_id).toBe(org.id);
+    expect(returning.user.trial_claimed_at).toBeNull();
+    expect(
+      (await pool.query('SELECT 1 FROM outreachr.organizations WHERE created_by=$1', [guest.id]))
+        .rowCount,
+    ).toBe(0);
+  });
+
   it('concurrent first login creates exactly one default workspace and one trial', async () => {
     const account = identity();
     const results = await Promise.all([
@@ -1008,6 +1027,58 @@ describe('HTTP login and workspace boundary', () => {
 });
 
 describe('cloud CRM and file transport', () => {
+  it('expires abandoned uploads, retains documents, and allows cleanup after subscription expiry', async () => {
+    const current = new WorkspaceStore(pool);
+    const owner = identity();
+    const viewer = identity();
+    const org = (await current.signIn(owner)).organizations[0]!;
+    await current.signIn(viewer, false);
+    const invitation = await current.invite(owner.id, org.id, viewer.email, 'viewer');
+    await current.acceptInvite(viewer.id, invitation.token);
+    const files = new FileStore(pool);
+    const abandoned = await files.save(
+      owner.id,
+      org.id,
+      'abandoned.csv',
+      Buffer.from('orphan'),
+      'upload',
+    );
+    const document = await files.save(
+      owner.id,
+      org.id,
+      'Deck.pdf',
+      Buffer.from('deck bytes'),
+      'upload',
+    );
+    expect((await files.get(owner.id, org.id, document)).expires_at).not.toBeNull();
+    await expect(files.retain(viewer.id, org.id, document)).rejects.toMatchObject({
+      code: 'document_upload_required',
+    });
+    await files.retain(owner.id, org.id, document);
+    expect((await files.get(viewer.id, org.id, document)).expires_at).toBeNull();
+    const inventory = await files.list(viewer.id, org.id);
+    expect(inventory.files).toHaveLength(2);
+    expect(inventory.files.every((file) => !file.canRemove)).toBe(true);
+    expect(inventory.usedBytes).toBe(16);
+    await pool.query(
+      "UPDATE outreachr.files SET expires_at=now()-interval '1 second' WHERE id=$1",
+      [abandoned.slice(11)],
+    );
+    await files.cleanup();
+    await expect(files.get(owner.id, org.id, abandoned)).rejects.toMatchObject({
+      code: 'file_not_found',
+    });
+    await pool.query(
+      "UPDATE outreachr.organizations SET trial_ends_at=now()-interval '1 day' WHERE id=$1",
+      [org.id],
+    );
+    await expect(files.remove(viewer.id, org.id, document)).rejects.toMatchObject({
+      code: 'editing_role_required',
+    });
+    await files.remove(owner.id, org.id, document);
+    expect((await files.list(owner.id, org.id)).usedBytes).toBe(0);
+  });
+
   it('isolates files by workspace and author, rejects paths, and keeps viewer reads', async () => {
     const workspaces = new WorkspaceStore(pool);
     const owner = identity();

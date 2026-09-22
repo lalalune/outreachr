@@ -122,6 +122,13 @@ export function createBridge(orgId: string): OutreachrBridge {
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
   return {
+    cloudFiles: {
+      list: () => api(`${base}/files`),
+      remove: async (handle) => {
+        if (!/^cloud-file:[0-9a-f-]{36}$/.test(handle)) throw new Error('Invalid workspace file.');
+        await api(`${base}/files/${handle.slice(11)}`, { method: 'DELETE' });
+      },
+    },
     bootstrap: () => api(`${base}/bootstrap`),
     command: async (name, payload) =>
       (name === 'agent.run'

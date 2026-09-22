@@ -9,9 +9,9 @@ import {
   Plus,
   Shield,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from '../lib/router';
-import type { KnowledgeItem } from '../../../shared/contracts';
+import type { KnowledgeItem, WorkspaceFileInventory } from '../../../shared/contracts';
 import { isSecureExternalUrl } from '../lib/external-links';
 import {
   Badge,
@@ -126,6 +126,28 @@ export function DocumentsPage(): React.JSX.Element {
   const [sharePolicy, setSharePolicy] = useState<KnowledgeItem['sharePolicy']>('meeting_only');
   const [savingLink, setSavingLink] = useState(false);
   const [addingFile, setAddingFile] = useState(false);
+  const cloud = data?.hosting === 'cloud';
+  const [storage, setStorage] = useState<WorkspaceFileInventory | null>(null);
+  const [storageError, setStorageError] = useState('');
+  const [removing, setRemoving] = useState<string | null>(null);
+  useEffect(() => {
+    let current = true;
+    if (cloud && window.outreachr.cloudFiles)
+      void window.outreachr.cloudFiles
+        .list()
+        .then((value) => {
+          if (current) {
+            setStorage(value);
+            setStorageError('');
+          }
+        })
+        .catch((error: Error) => {
+          if (current) setStorageError(error.message);
+        });
+    return () => {
+      current = false;
+    };
+  }, [cloud, data]);
   if (!data) return <></>;
   const documentKnowledge = data.knowledge.filter(isDocumentReference);
   const suggestedPackage = currentPackageItems(documentKnowledge);
@@ -159,7 +181,11 @@ export function DocumentsPage(): React.JSX.Element {
     try {
       const path = await window.outreachr.selectFile();
       if (!path) return;
-      const filename = path.split(/[\\/]/u).at(-1) ?? 'Local document';
+      const uploaded = cloud ? await window.outreachr.cloudFiles?.list() : null;
+      const filename =
+        uploaded?.files.find((file) => `cloud-file:${file.id}` === path)?.name ??
+        path.split(/[\\/]/u).at(-1) ??
+        'Document';
       await command('knowledge.save', {
         title: filename,
         category: 'company',
@@ -168,8 +194,10 @@ export function DocumentsPage(): React.JSX.Element {
       });
       notify({
         tone: 'success',
-        title: 'Local document tracked',
-        detail: 'The source file stays where you chose it.',
+        title: cloud ? 'Document uploaded' : 'Local document tracked',
+        detail: cloud
+          ? 'Stored in this workspace and readable by its members.'
+          : 'The source file stays where you chose it.',
       });
     } finally {
       setAddingFile(false);
@@ -193,7 +221,11 @@ export function DocumentsPage(): React.JSX.Element {
     <div className="page">
       <PageHeader
         title="Documents & data room"
-        description="Track founder-controlled links and disclosure state. Outreachr does not silently upload local files."
+        description={
+          cloud
+            ? 'Upload documents to this workspace or track external links. Workspace members can read uploaded files; disclosure labels guide outreach, not member access.'
+            : 'Track founder-controlled links and disclosure state. Outreachr does not silently upload local files.'
+        }
         actions={
           <>
             <Button icon={<Link2 aria-hidden="true" />} onClick={() => setLinkOpen(true)}>
@@ -205,11 +237,68 @@ export function DocumentsPage(): React.JSX.Element {
               loading={addingFile}
               onClick={() => void addFile()}
             >
-              Track local document
+              {cloud ? 'Upload workspace document' : 'Track local document'}
             </Button>
           </>
         }
       />
+      {cloud && (
+        <Section
+          title="Workspace storage"
+          description="Documents are shared with workspace members. Unlinked uploads expire after 24 hours. Removing a file does not revoke a copy already downloaded."
+        >
+          {storageError && <p role="alert">{storageError}</p>}
+          {storage && (
+            <>
+              <p>
+                {(storage.usedBytes / 1024 / 1024).toFixed(1)} MB of{' '}
+                {storage.limitBytes / 1024 / 1024} MB used · 25 MB per file
+              </p>
+              {storage.files.map((file) => (
+                <div key={file.id}>
+                  <span>
+                    {file.name} · {(file.bytes / 1024).toFixed(1)} KB
+                    {file.expiresAt ? ' · temporary upload' : ' · workspace document'}
+                  </span>{' '}
+                  {file.canRemove && (
+                    <Button tone="quiet" onClick={() => setRemoving(`cloud-file:${file.id}`)}>
+                      Remove file
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </>
+          )}
+        </Section>
+      )}
+      {removing && (
+        <Dialog open title="Remove workspace file?" onClose={() => setRemoving(null)}>
+          <p>
+            This removes the stored file for every workspace member. Document references will also
+            be removed. Download a copy first if needed.
+          </p>
+          <Button onClick={() => setRemoving(null)}>Keep file</Button>
+          <Button
+            tone="danger"
+            onClick={() => {
+              const handle = removing;
+              void (async () => {
+                // Remove references first; if file removal fails, the inventory keeps it recoverable.
+                for (const item of data.knowledge.filter(
+                  (item) => item.content === `file:${handle}`,
+                ))
+                  await command('knowledge.remove', { id: item.id });
+                await window.outreachr.cloudFiles?.remove(handle);
+                setStorage(await window.outreachr.cloudFiles!.list());
+                setRemoving(null);
+                notify({ tone: 'success', title: 'Workspace file removed' });
+              })().catch((error: Error) => setStorageError(error.message));
+            }}
+          >
+            Remove file
+          </Button>
+        </Dialog>
+      )}
       <div className="document-policy">
         <Shield aria-hidden="true" />
         <div>

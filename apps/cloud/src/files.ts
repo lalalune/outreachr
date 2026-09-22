@@ -9,7 +9,7 @@ import { requireCondition } from './errors';
 import { entitlement, memberOrganization } from './workspaces';
 
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
-const MAX_WORKSPACE_FILE_BYTES = 100 * 1024 * 1024;
+export const MAX_WORKSPACE_FILE_BYTES = 100 * 1024 * 1024;
 const reference = z.string().regex(/^cloud-file:[0-9a-f-]{36}$/);
 
 export class FileStore {
@@ -59,7 +59,7 @@ export class FileStore {
       );
       const id = randomUUID();
       await client.query(
-        `INSERT INTO outreachr.files(id,org_id,user_id,name,content,purpose,expires_at) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $6='download' THEN now()+interval '1 hour' ELSE NULL END)`,
+        `INSERT INTO outreachr.files(id,org_id,user_id,name,content,purpose,expires_at) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $6='download' THEN now()+interval '1 hour' ELSE now()+interval '24 hours' END)`,
         [id, orgId, userId, safeName, content, purpose],
       );
       return `cloud-file:${id}`;
@@ -76,8 +76,9 @@ export class FileStore {
         content: Buffer;
         user_id: string;
         purpose: string;
+        expires_at: Date | null;
       }>(
-        'SELECT id,name,content,user_id,purpose FROM outreachr.files WHERE id=$1 AND org_id=$2 AND (expires_at IS NULL OR expires_at>now())',
+        'SELECT id,name,content,user_id,purpose,expires_at FROM outreachr.files WHERE id=$1 AND org_id=$2 AND (expires_at IS NULL OR expires_at>now())',
         [id, orgId],
       )
     ).rows[0];
@@ -97,10 +98,10 @@ export class FileStore {
       await lockOrganization(client, orgId);
       const org = await memberOrganization(client, userId, orgId);
       requireCondition(
-        entitlement(org, new Date()).canEdit,
+        org.role !== 'viewer',
         403,
-        'editing_seat_required',
-        'An active editing seat is required.',
+        'editing_role_required',
+        'Only workspace editors and admins can remove files.',
       );
       const file = await new FileStore(client).get(userId, orgId, handle);
       requireCondition(
@@ -111,6 +112,52 @@ export class FileStore {
       );
       await client.query('DELETE FROM outreachr.files WHERE id=$1 AND org_id=$2', [file.id, orgId]);
     });
+  }
+
+  async list(userId: string, orgId: string) {
+    const org = await memberOrganization(this.database, userId, orgId);
+    const rows = await this.database.query<{
+      id: string;
+      name: string;
+      bytes: number;
+      expiresAt: Date | null;
+      canRemove: boolean;
+    }>(
+      `SELECT id,name,octet_length(content) AS bytes,expires_at AS "expiresAt",
+        ($2::boolean AND (user_id=$3 OR $4::boolean)) AS "canRemove"
+       FROM outreachr.files WHERE org_id=$1 AND purpose='upload'
+       AND (expires_at IS NULL OR expires_at>now()) ORDER BY created_at DESC`,
+      [orgId, org.role !== 'viewer', userId, org.role === 'owner' || org.role === 'admin'],
+    );
+    const used = await this.database.query<{ bytes: number }>(
+      `SELECT COALESCE(sum(octet_length(content)),0)::int AS bytes FROM outreachr.files
+       WHERE org_id=$1 AND (expires_at IS NULL OR expires_at>now())`,
+      [orgId],
+    );
+    return {
+      files: rows.rows,
+      usedBytes: used.rows[0]!.bytes,
+      limitBytes: MAX_WORKSPACE_FILE_BYTES,
+    };
+  }
+
+  /** Only an uploader can turn their temporary upload into a shared document. */
+  async retain(userId: string, orgId: string, handle: string) {
+    const file = await this.get(userId, orgId, handle);
+    requireCondition(
+      file.purpose === 'upload' && (file.user_id === userId || file.expires_at === null),
+      403,
+      'document_upload_required',
+      'Choose your own upload or an existing workspace document.',
+    );
+    await this.database.query(
+      `UPDATE outreachr.files SET expires_at=NULL WHERE id=$1 AND org_id=$2 AND user_id=$3`,
+      [file.id, orgId, userId],
+    );
+  }
+
+  async cleanup() {
+    await this.database.query('DELETE FROM outreachr.files WHERE expires_at < now()');
   }
 
   async materialize(userId: string, orgId: string, handle: string, directory: string) {

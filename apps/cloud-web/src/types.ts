@@ -24,6 +24,6 @@ export interface Organization {
   };
 }
 export interface Account {
-  user: { id: string; email: string; name: string; defaultOrgId: string };
+  user: { id: string; email: string; name: string; defaultOrgId: string | null };
   organizations: Organization[];
 }

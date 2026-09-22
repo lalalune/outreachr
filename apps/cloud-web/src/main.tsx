@@ -90,6 +90,62 @@ function CloudApp() {
         <p role="status">Loading Outreachr…</p>
       </main>
     );
+  const acceptInvite = async () => {
+    if (!invite) return;
+    try {
+      const accepted = await post<{ id: string }>('/api/invites/accept', { token: invite });
+      localStorage.setItem('outreachr.cloud.org', accepted.id);
+      window.location.assign('/');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'The invitation could not be accepted.');
+    }
+  };
+  if (account && !org)
+    return (
+      <main className="cloud-landing">
+        <h1>{invite ? 'Join your workspace' : 'Create your first workspace'}</h1>
+        <p>
+          Signed in as {account.user.email}. Joining another workspace does not start your own
+          trial.
+        </p>
+        {error && <p role="alert">{error}</p>}
+        {invite && (
+          <button className="cloud-primary" onClick={() => void acceptInvite()}>
+            Accept invitation
+          </button>
+        )}
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (creating || !newName.trim()) return;
+            setCreating(true);
+            void post<{ id: string }>('/api/organizations', { name: newName.trim() })
+              .then((created) => {
+                localStorage.setItem('outreachr.cloud.org', created.id);
+                window.location.assign('/');
+              })
+              .catch((cause: Error) => setError(cause.message))
+              .finally(() => setCreating(false));
+          }}
+        >
+          <label>
+            Workspace name
+            <input
+              value={newName}
+              onChange={(event) => setNewName(event.target.value)}
+              maxLength={100}
+              required
+            />
+          </label>
+          <button disabled={creating}>Create my own workspace</button>
+        </form>
+        <button
+          onClick={() => void post('/api/auth/logout', {}).then(() => window.location.reload())}
+        >
+          Use another account
+        </button>
+      </main>
+    );
   if (!account || !org)
     return (
       <main className="cloud-landing">
@@ -207,18 +263,7 @@ function CloudApp() {
       {invite && (
         <div className="cloud-banner">
           <span>Accept the invitation using the email address it was sent to.</span>
-          <button
-            onClick={() =>
-              void post<{ orgId: string }>('/api/invites/accept', { token: invite })
-                .then(async () => {
-                  await reload();
-                  window.location.assign('/');
-                })
-                .catch((cause: Error) => setError(cause.message))
-            }
-          >
-            Accept invitation
-          </button>
+          <button onClick={() => void acceptInvite()}>Accept invitation</button>
         </div>
       )}
       <div className="cloud-banner">

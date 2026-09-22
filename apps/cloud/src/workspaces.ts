@@ -170,7 +170,10 @@ export class WorkspaceStore {
     readonly billingMode: 'local' | 'cloud' = 'local',
   ) {}
 
-  async signIn(identity: Identity): Promise<{ user: UserRow; organizations: Organization[] }> {
+  async signIn(
+    identity: Identity,
+    createDefault = true,
+  ): Promise<{ user: UserRow; organizations: Organization[] }> {
     requireCondition(
       identity.emailVerified,
       403,
@@ -188,7 +191,7 @@ export class WorkspaceStore {
         [identity.id],
       );
       const user = found.rows[0]!;
-      if (!user.default_org_id) {
+      if (!user.default_org_id && createDefault) {
         const orgId = randomUUID();
         const now = this.now();
         const trialEnd =
@@ -242,10 +245,25 @@ export class WorkspaceStore {
 
   async create(userId: string, name: string): Promise<Organization> {
     return transaction(this.pool, async (client) => {
+      await client.query('SELECT id FROM outreachr.users WHERE id=$1 FOR UPDATE', [userId]);
+      const owned = await client.query(
+        'SELECT 1 FROM outreachr.organizations WHERE created_by=$1 LIMIT 1',
+        [userId],
+      );
       const orgId = randomUUID();
       await client.query(
-        'INSERT INTO outreachr.organizations(id,name,created_by,cloud_provisioning_state) VALUES($1,$2,$3,$4)',
-        [orgId, name.trim(), userId, this.billingMode === 'cloud' ? 'pending' : null],
+        'INSERT INTO outreachr.organizations(id,name,created_by,cloud_provisioning_state,cloud_trial_requested) VALUES($1,$2,$3,$4,$5)',
+        [
+          orgId,
+          name.trim(),
+          userId,
+          this.billingMode === 'cloud' ? 'pending' : null,
+          this.billingMode === 'cloud' && owned.rowCount === 0,
+        ],
+      );
+      await client.query(
+        'UPDATE outreachr.users SET default_org_id=COALESCE(default_org_id,$2) WHERE id=$1',
+        [userId, orgId],
       );
       await client.query(
         "INSERT INTO outreachr.memberships(org_id,user_id,role) VALUES($1,$2,'owner')",
@@ -385,6 +403,10 @@ export class WorkspaceStore {
       await client.query(
         'INSERT INTO outreachr.memberships(org_id,user_id,role) VALUES($1,$2,$3)',
         [invite.org_id, userId, invite.role],
+      );
+      await client.query(
+        'UPDATE outreachr.users SET default_org_id=COALESCE(default_org_id,$2) WHERE id=$1',
+        [userId, invite.org_id],
       );
       await enqueueMembershipChange(client, org, userId, invite.role);
       await client.query('UPDATE outreachr.invites SET consumed_by=$2 WHERE id=$1', [

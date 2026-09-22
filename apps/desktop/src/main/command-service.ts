@@ -223,6 +223,7 @@ const commandSchemas: Record<keyof CommandMap, z.ZodType> = {
     agenda: z.string().max(50_000).nullable(),
     notes: z.string().max(100_000).nullable(),
   }),
+  'knowledge.remove': z.object({ id }),
   'knowledge.save': z.object({
     id: id.optional(),
     title: z.string().trim().min(1).max(2_000),
@@ -490,6 +491,11 @@ export class CommandService {
         }
         case 'meeting.update':
           result = await this.#vault.updateMeeting(payload as CommandMap['meeting.update']);
+          break;
+        case 'knowledge.remove':
+          result = await this.#vault.removeKnowledge(
+            (payload as CommandMap['knowledge.remove']).id,
+          );
           break;
         case 'knowledge.save':
           result = await this.#vault.saveKnowledge(payload as CommandMap['knowledge.save']);
