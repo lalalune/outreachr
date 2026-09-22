@@ -8,6 +8,7 @@ import type { RuntimeContext } from './runtime';
 import { FileStore, MAX_ARCHIVE_BYTES, MAX_FILE_BYTES, MAX_WORKSPACE_FILE_BYTES } from './files';
 import { transaction } from './database';
 import { requireCondition } from './errors';
+import { withArchiveCapacity } from './archive-admission';
 
 const digest = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
 const content = z.object({ bytes: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) });
@@ -54,7 +55,11 @@ function stripAuthority(vault: CoreVault) {
   vault.run('VACUUM');
 }
 
-export async function exportCloudArchive(context: RuntimeContext, password: string) {
+export function exportCloudArchive(context: RuntimeContext, password: string) {
+  return withArchiveCapacity(() => exportArchive(context, password));
+}
+
+async function exportArchive(context: RuntimeContext, password: string) {
   const { vault, client, organization, session } = context;
   const clone = await openNodeVault({ bytes: vault.vault.export() });
   let snapshot: Buffer;
@@ -108,11 +113,11 @@ export async function exportCloudArchive(context: RuntimeContext, password: stri
   };
 }
 
-export async function restoreCloudArchive(
-  context: RuntimeContext,
-  handle: string,
-  password: string,
-) {
+export function restoreCloudArchive(context: RuntimeContext, handle: string, password: string) {
+  return withArchiveCapacity(() => restoreArchive(context, handle, password));
+}
+
+async function restoreArchive(context: RuntimeContext, handle: string, password: string) {
   const { vault, client, organization, session } = context;
   // Historical provider actions must never be rolled back by a portable import.
   requireCondition(

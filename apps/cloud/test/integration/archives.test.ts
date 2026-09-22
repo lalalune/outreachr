@@ -14,6 +14,7 @@ import { RateLimiter } from '../../src/rate-limits';
 import { MailboxWorker } from '../../src/mailbox-worker';
 import { SessionStore, CredentialCipher } from '../../src/sessions';
 import { FileStore } from '../../src/files';
+import { exportCloudArchive } from '../../src/archive';
 
 const database = `outreachr_archives_${randomUUID().replaceAll('-', '')}`;
 const url = new URL(
@@ -77,6 +78,37 @@ beforeAll(async () => {
 afterAll(() => closeTestDatabase(pool, admin, database));
 
 describe('complete cloud archives', () => {
+  it('bounds simultaneous archive transformations across different workspaces', async () => {
+    const owners = await Promise.all([workspace(), workspace()]);
+    let arrived = 0;
+    let release!: () => void;
+    const ready = new Promise<void>((resolve) => (release = resolve));
+    const results = await Promise.allSettled(
+      owners.map((owner) =>
+        runtime().withVault(
+          owner.session,
+          owner.identity,
+          owner.org.id,
+          async (context) => {
+            if (++arrived === 2) release();
+            await ready;
+            return exportCloudArchive(context, password);
+          },
+          undefined,
+          'optional',
+        ),
+      ),
+    );
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find((result) => result.status === 'rejected')).toMatchObject({
+      reason: { status: 503, code: 'archive_busy' },
+    });
+    const retry = owners[results.findIndex((result) => result.status === 'rejected')]!;
+    await expect(
+      retry.run('backup.export', { directory: 'cloud-downloads', password }),
+    ).resolves.toHaveProperty('path');
+  });
+
   it('does not retain an upload when its document command fails validation', async () => {
     const owner = await workspace();
     const path = await files.save(
