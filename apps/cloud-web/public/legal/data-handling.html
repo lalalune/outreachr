@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>Outreachr technical data handling</title
+  ><style>
+    body {
+      font: 18px/1.6 system-ui;
+      max-width: 760px;
+      margin: 3rem auto;
+      padding: 0 1.3rem;
+      color: #18242b;
+    }
+    a {
+      color: #174f75;
+    }
+  </style>
+  <main>
+    <a href="/">← Outreachr</a>
+    <h1>Technical data handling</h1>
+    <p>
+      This describes the hosted application's implemented behavior. It is not a complete
+      hosted-service contract or privacy policy. Legal seller information, private support routing,
+      refund terms and infrastructure backup retention must be configured before a public paid
+      launch.
+    </p>
+    <h2>Workspace information</h2>
+    <p>
+      The hosted app stores your company profile, contacts, investor records, drafts, tasks,
+      meetings, source notes, approved actions, and saved documents on its server. Workspace
+      members, including viewers, can read and export shared CRM information. Selecting a document
+      uploads it; it does not remain only on your computer.
+    </p>
+    <h2>Connected services</h2>
+    <p>
+      Eliza Cloud handles login, app subscriptions, inference and delegated Google access. Delegated
+      session credentials are encrypted in the app database. Each member selects their own Google
+      mailbox; imported relationship activity becomes part of the shared workspace. AI receives the
+      CRM context you select for a request. Provider processing is also subject to the applicable
+      provider's policies.
+    </p>
+    <h2>Retention controls in this app</h2>
+    <p>
+      Unlinked uploads expire after 24 hours. Generated downloads and archive transfers expire after
+      one hour. Saved documents remain until removed or workspace content is deleted. The server
+      runs periodic cleanup; expiration also prevents further downloads. Request-rate buckets are
+      removed after ten minutes. Product activity records use action names and workspace
+      identifiers, not a second copy of message bodies or document contents.
+    </p>
+    <p>
+      Permanent workspace content removal deletes active CRM snapshots, saved files, mailbox
+      selections, invitations and retained AI response content. Minimal membership, billing and
+      audit records remain. It does not recall messages, delete provider calendars, remove shared
+      Eliza identity, erase other apps, or itself remove older infrastructure backups. No
+      infrastructure backup-retention period is asserted here.
+    </p>
+    <h2>Your controls</h2>
+    <p>
+      You can export records, download an encrypted complete cloud archive, remove documents,
+      disconnect a mailbox, disable background sync, sign out all Outreachr sessions, leave a
+      workspace, or have an owner archive or delete its content. Archiving and deletion are separate
+      from subscription cancellation.
+    </p>
+    <p><a href="/help.html">Hosted app guide and safe diagnostic reporting</a></p>
+  </main>
+</html>

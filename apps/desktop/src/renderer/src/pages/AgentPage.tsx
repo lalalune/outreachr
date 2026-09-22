@@ -182,6 +182,14 @@ export function AgentPage({ cloudModel }: { cloudModel?: string } = {}): React.J
 
   return (
     <div className="page agent-page">
+      {cloudModel && (
+        <p className="cloud-banner">
+          AI prepares proposals from the CRM context you select. It does not browse the web, verify
+          current investor facts, or send outreach. Review sources and every proposed action.
+          Recorded paid responses are recovered when you return; an unconfirmed request is not
+          automatically retried.
+        </p>
+      )}
       <PageHeader
         title="Agent"
         description={

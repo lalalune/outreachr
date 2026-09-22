@@ -163,6 +163,11 @@ export function InvestorsPage(): React.JSX.Element {
 
   return (
     <div className="page page--wide">
+      <p className="muted">
+        Investor records are a research starting point. Check the dated sources, current role,
+        thesis and address before contact. Fit scores reflect your saved criteria; they do not
+        verify interest or contactability.
+      </p>
       <PageHeader
         title="Investor universe"
         description="Evidence-backed firms, partners, angels, scouts, and sourced portfolio examples."

@@ -129,6 +129,34 @@ export class SessionStore {
     };
   }
 
+  /** Background work uses only a currently valid session, bound to the same member. */
+  async forBackground(userId: string): Promise<Session> {
+    const row = (
+      await this.pool.query<{
+        token_hash: string;
+        eliza_grant_ciphertext: string;
+        expires_at: Date;
+      }>(
+        'SELECT token_hash,eliza_grant_ciphertext,expires_at FROM outreachr.sessions WHERE user_id=$1 AND expires_at>$2 ORDER BY expires_at DESC LIMIT 1',
+        [userId, this.now()],
+      )
+    ).rows[0];
+    requireCondition(
+      row,
+      401,
+      'session_expired',
+      'Sign in again to resume background synchronization.',
+    );
+    return {
+      userId,
+      grant: this.cipher.decrypt(row.eliza_grant_ciphertext, row.token_hash),
+      expiresAt: row.expires_at,
+    };
+  }
+  async revokeAll(userId: string) {
+    await this.pool.query('DELETE FROM outreachr.sessions WHERE user_id=$1', [userId]);
+  }
+
   async revoke(token: string): Promise<void> {
     await this.pool.query('DELETE FROM outreachr.sessions WHERE token_hash=$1', [hashToken(token)]);
   }

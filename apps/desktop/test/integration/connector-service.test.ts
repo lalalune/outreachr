@@ -702,14 +702,14 @@ describe('ConnectorService with MSW provider boundaries', () => {
     });
     const firstStored = vault.vault.one<{ attendee_json: string }>(
       'SELECT attendee_json FROM meetings WHERE external_calendar_id=?',
-      ['google:provider-event-1'],
+      ['google:founder@local.test:provider-event-1'],
     );
     expect(JSON.parse(firstStored!.attendee_json)).toEqual([
       { name: 'Investor Example', email: 'investor@example.test' },
     ]);
     expect(
       vault.vault.scalar('SELECT COUNT(*) FROM meetings WHERE external_calendar_id=?', [
-        'google:provider-event-1',
+        'google:founder@local.test:provider-event-1',
       ]),
     ).toBe(1);
     await vault.updateMeeting({
@@ -729,7 +729,7 @@ describe('ConnectorService with MSW provider boundaries', () => {
     });
     expect(
       vault.vault.scalar('SELECT COUNT(*) FROM meetings WHERE external_calendar_id=?', [
-        'google:provider-event-1',
+        'google:founder@local.test:provider-event-1',
       ]),
     ).toBe(1);
     expect(listCalls).toBe(4);

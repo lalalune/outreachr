@@ -45,7 +45,7 @@ export class MailboxStore {
       await lockOrganization(client, orgId);
       const org = await memberOrganization(client, userId, orgId);
       requireCondition(
-        entitlement(org, new Date()).canEdit,
+        connectionId === null || entitlement(org, new Date()).canEdit,
         403,
         'editing_seat_required',
         'An active editing seat is required to connect Gmail.',
@@ -59,7 +59,7 @@ export class MailboxStore {
         const email = z.email().parse(connection!.identity?.email).toLowerCase();
         await client.query(
           `INSERT INTO outreachr.mailboxes(org_id,user_id,connection_id,email) VALUES($1,$2,$3,$4)
-          ON CONFLICT(org_id,user_id) DO UPDATE SET connection_id=EXCLUDED.connection_id,email=EXCLUDED.email,selected_at=now()`,
+          ON CONFLICT(org_id,user_id) DO UPDATE SET connection_id=EXCLUDED.connection_id,email=EXCLUDED.email,selected_at=now(),background_sync=false,next_sync_at=now(),last_sync_at=NULL,sync_error=NULL`,
           [orgId, userId, connectionId, email],
         );
       }
@@ -71,6 +71,40 @@ export class MailboxStore {
           connectionId ? 'mailbox.selected' : 'mailbox.disconnected',
           JSON.stringify({ connectionId }),
         ],
+      );
+    });
+  }
+
+  async syncStatus(userId: string, orgId: string) {
+    await memberOrganization(this.pool, userId, orgId);
+    return (
+      (
+        await this.pool.query<{ enabled: boolean; lastSyncAt: Date | null; error: string | null }>(
+          'SELECT background_sync AS enabled,last_sync_at AS "lastSyncAt",sync_error AS error FROM outreachr.mailboxes WHERE org_id=$1 AND user_id=$2',
+          [orgId, userId],
+        )
+      ).rows[0] ?? null
+    );
+  }
+  async setBackgroundSync(userId: string, orgId: string, enabled: boolean) {
+    await transaction(this.pool, async (client) => {
+      await lockOrganization(client, orgId);
+      const org = await memberOrganization(client, userId, orgId);
+      requireCondition(
+        !enabled || entitlement(org, new Date()).canEdit,
+        403,
+        'editing_seat_required',
+        'An active editing seat is required for mailbox synchronization.',
+      );
+      const result = await client.query(
+        'UPDATE outreachr.mailboxes SET background_sync=$3,next_sync_at=now() WHERE org_id=$1 AND user_id=$2',
+        [orgId, userId, enabled],
+      );
+      requireCondition(
+        result.rowCount,
+        409,
+        'mailbox_required',
+        'Select your Gmail account first.',
       );
     });
   }

@@ -49,6 +49,7 @@ export default {
         const value = request.headers.get(name);
         if (value) headers.set(name, value);
       }
+      headers.set('X-Outreachr-Client-IP', request.headers.get('CF-Connecting-IP') ?? 'unknown');
       headers.set('X-Outreachr-Edge', env.EDGE_SECRET);
       try {
         response = await fetch(target, {

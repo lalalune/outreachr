@@ -1,4 +1,5 @@
 /** Routes browser sessions and workspace operations behind same-origin and membership checks. */
+import { RateLimiter } from './rate-limits';
 import { randomUUID } from 'node:crypto';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { stream } from 'hono/streaming';
@@ -62,6 +63,7 @@ export function createApp(options: {
   agentRuns?: AgentRuns;
 }) {
   const { config, pool, sessions, eliza } = options;
+  const limits = new RateLimiter(pool);
   const workspaces = new WorkspaceStore(pool, () => new Date(), 'cloud');
   const usage = new UsageStore(pool);
   const billing = new BillingStore(pool, eliza, config.productFamilyKey);
@@ -81,12 +83,21 @@ export function createApp(options: {
   const cookie = { httpOnly: true, secure: config.production, sameSite: 'Lax' as const, path: '/' };
 
   app.use('/api/billing/notifications', bodyLimit({ maxSize: 65_536 }));
-  app.use('*', (c, next) =>
-    bodyLimit({
-      maxSize: c.req.path.endsWith('/files') ? MAX_FILE_BYTES : 2_000_000,
-      onError: () => c.json({ error: 'Request too large.', code: 'request_too_large' }, 413),
-    })(c, next),
-  );
+  // Authenticate uploads before buffering their larger request bodies.
+  const requestLimit: MiddlewareHandler<CloudEnv> = (c, next) => {
+    if (
+      c.req.method === 'POST' &&
+      /^\/api\/organizations\/[^/]+\/(files|archives\/chunks)$/.test(c.req.path)
+    )
+      return next();
+    return (
+      bodyLimit({
+        maxSize: 2_000_000,
+        onError: () => c.json({ error: 'Request too large.', code: 'request_too_large' }, 413),
+      }) as MiddlewareHandler<CloudEnv>
+    )(c, next);
+  };
+  app.use('*', requestLimit);
   app.use('*', async (c, next) => {
     const requestId = randomUUID();
     c.set('requestId', requestId);
@@ -158,6 +169,7 @@ export function createApp(options: {
     c.json({ plans: PLANS, trialDays: TRIAL_DAYS, revision: config.revision }),
   );
   app.get('/api/auth/login', async (c) => {
+    await limits.consume('login', c.req.header('X-Outreachr-Client-IP') ?? 'local', 30);
     const state = await sessions.beginLogin(c.req.query('returnTo') ?? '/');
     setCookie(c, stateCookie, state, { ...cookie, maxAge: 600 });
     return c.redirect(eliza.authorizeUrl(state));
@@ -186,6 +198,7 @@ export function createApp(options: {
   );
   const authenticate: MiddlewareHandler<CloudEnv> = async (c, next) => {
     const session = await sessions.get(getCookie(c, sessionCookie));
+    await limits.consume('account', session.userId, 600);
     const identity = await eliza.identity(session.grant);
     requireCondition(
       identity.id === session.userId && identity.emailVerified,
@@ -198,6 +211,12 @@ export function createApp(options: {
     await next();
   };
   app.use('/api/*', authenticate);
+  app.post('/api/auth/logout-all', async (c) => {
+    const session = await sessions.get(getCookie(c, sessionCookie));
+    await sessions.revokeAll(session.userId);
+    deleteCookie(c, sessionCookie, cookie);
+    return c.json({ success: true });
+  });
   app.post('/api/auth/logout', async (c) => {
     const session = c.get('session');
     await sessions.revoke(getCookie(c, sessionCookie)!);
@@ -265,7 +284,10 @@ export function createApp(options: {
   app.use('/api/organizations/:orgId/*', async (c, next) => {
     const orgId = uuid.parse(c.req.param('orgId'));
     const session = c.get('session');
-    const sensitive = /\/(members|invites|billing)(?:\/|$)/.test(c.req.path);
+    const sensitive =
+      /\/(members|invites|billing|archive|archives|delete|leave|diagnostics)(?:\/|$)/.test(
+        c.req.path,
+      );
     if (sensitive) {
       // Accepted members can inspect local membership during a provider outage.
       // Privileged reads and every mutation still require current Cloud authority.
@@ -313,6 +335,89 @@ export function createApp(options: {
     const result = await ownership.recover(session.userId, org.id, session.grant);
     await membershipSync.runOrg(org.id, 20);
     return c.json(result);
+  });
+  app.post('/api/organizations/:orgId/archive', async (c) => {
+    const input = z
+      .object({ archived: z.boolean() })
+      .strict()
+      .parse(await c.req.json());
+    await workspaces.archive(c.get('session').userId, c.get('organization').id, input.archived);
+    return c.json({ success: true });
+  });
+  app.post('/api/organizations/:orgId/delete', async (c) => {
+    const input = z
+      .object({ confirmation: z.string().min(1).max(100) })
+      .strict()
+      .parse(await c.req.json());
+    const org = c.get('organization'),
+      session = c.get('session');
+    requireCondition(
+      org.role === 'owner',
+      403,
+      'owner_required',
+      'Only a workspace owner can delete data.',
+    );
+    if (org.cloud_billing_account_id)
+      await billingAccounts.snapshot(session.userId, org.id, session.grant);
+    await workspaces.deleteWorkspace(session.userId, org.id, input.confirmation);
+    return c.json({
+      success: true,
+      contentPurged: true,
+      retained:
+        'Minimal membership, billing and audit records remain. Shared Eliza identity and other apps are unchanged.',
+    });
+  });
+  app.post('/api/organizations/:orgId/leave', async (c) => {
+    z.object({})
+      .strict()
+      .parse(await c.req.json());
+    const org = c.get('organization'),
+      session = c.get('session');
+    await workspaces.changeMember(session.userId, org.id, session.userId, null);
+    await membershipSync.runOrg(org.id, 20);
+    return c.json({ success: true });
+  });
+  app.get('/api/organizations/:orgId/diagnostics', async (c) => {
+    const org = c.get('organization');
+    requireCondition(
+      ['owner', 'admin'].includes(org.role),
+      403,
+      'admin_required',
+      'Workspace diagnostics require an owner or admin.',
+    );
+    const queues = (
+      await pool.query<{
+        pendingMemberships: number;
+        pendingBilling: number;
+        unconfirmedAi: number;
+        staleMailboxes: number;
+      }>(
+        `SELECT
+      (SELECT count(*)::int FROM outreachr.cloud_membership_jobs WHERE org_id=$1 AND state='pending') AS "pendingMemberships",
+      (SELECT count(*)::int FROM outreachr.cloud_billing_intents WHERE org_id=$1 AND state='pending') AS "pendingBilling",
+      (SELECT count(*)::int FROM outreachr.usage WHERE org_id=$1 AND status IN ('reserved','ambiguous')) AS "unconfirmedAi",
+      (SELECT count(*)::int FROM outreachr.mailboxes WHERE org_id=$1 AND background_sync AND (last_sync_at IS NULL OR last_sync_at<now()-interval '15 minutes')) AS "staleMailboxes"`,
+        [org.id],
+      )
+    ).rows[0];
+    const activity = (
+      await pool.query<{ action: string; count: number }>(
+        "SELECT action,count(*)::int AS count FROM outreachr.audit WHERE org_id=$1 AND created_at>now()-interval '30 days' GROUP BY action ORDER BY action",
+        [org.id],
+      )
+    ).rows;
+    c.header('Cache-Control', 'private, no-store');
+    return c.json({
+      generatedAt: new Date().toISOString(),
+      revision: config.revision,
+      workspaceId: org.id,
+      plan: org.plan,
+      subscriptionStatus: org.subscription_status,
+      archived: Boolean(org.archived_at),
+      billingObservedAt: org.cloud_billing_observed_at,
+      queues,
+      activity,
+    });
   });
   app.get('/api/organizations/:orgId/members', async (c) =>
     c.json(await workspaces.members(c.get('session').userId, c.get('organization').id)),
@@ -501,6 +606,17 @@ export function createApp(options: {
     );
     return c.json({ success: true });
   });
+  for (const path of [
+    '/api/organizations/:orgId/files',
+    '/api/organizations/:orgId/archives/chunks',
+  ])
+    app.use(
+      path,
+      bodyLimit({
+        maxSize: MAX_FILE_BYTES,
+        onError: (c) => c.json({ error: 'Request too large.', code: 'request_too_large' }, 413),
+      }),
+    );
   const files = new FileStore(pool);
   app.get('/api/organizations/:orgId/files', async (c) =>
     c.json(await files.list(c.get('session').userId, c.get('organization').id)),
@@ -516,6 +632,44 @@ export function createApp(options: {
           content,
           'upload',
         ),
+      },
+      201,
+    );
+  });
+  app.post('/api/organizations/:orgId/archives/chunks', async (c) => {
+    requireCondition(
+      ['owner', 'admin'].includes(c.get('organization').role),
+      403,
+      'admin_required',
+      'Only owners and admins can upload an archive.',
+    );
+    return c.json(
+      {
+        path: await files.save(
+          c.get('session').userId,
+          c.get('organization').id,
+          'archive-part',
+          Buffer.from(await c.req.arrayBuffer()),
+          'archive_part',
+        ),
+      },
+      201,
+    );
+  });
+  app.post('/api/organizations/:orgId/archives/assemble', async (c) => {
+    requireCondition(
+      ['owner', 'admin'].includes(c.get('organization').role),
+      403,
+      'admin_required',
+      'Only owners and admins can upload an archive.',
+    );
+    const { paths } = z
+      .object({ paths: z.array(z.string().max(100)).min(1).max(11) })
+      .strict()
+      .parse(await c.req.json());
+    return c.json(
+      {
+        path: await files.assembleArchive(c.get('session').userId, c.get('organization').id, paths),
       },
       201,
     );
@@ -540,6 +694,35 @@ export function createApp(options: {
       c.get('session').userId,
       c.get('organization').id,
       `cloud-file:${uuid.parse(c.req.param('fileId'))}`,
+    );
+    return c.json({ success: true });
+  });
+  app.get('/api/organizations/:orgId/mailbox/sync', async (c) => {
+    requireCondition(
+      options.runtime,
+      503,
+      'runtime_unavailable',
+      'The workspace runtime is unavailable.',
+    );
+    return c.json(
+      await options.runtime.mailboxes.syncStatus(c.get('session').userId, c.get('organization').id),
+    );
+  });
+  app.post('/api/organizations/:orgId/mailbox/sync', async (c) => {
+    requireCondition(
+      options.runtime,
+      503,
+      'runtime_unavailable',
+      'The workspace runtime is unavailable.',
+    );
+    const { enabled } = z
+      .object({ enabled: z.boolean() })
+      .strict()
+      .parse(await c.req.json());
+    await options.runtime.mailboxes.setBackgroundSync(
+      c.get('session').userId,
+      c.get('organization').id,
+      enabled,
     );
     return c.json({ success: true });
   });

@@ -1151,6 +1151,7 @@ describe('approval and send safety', () => {
 
     const base = {
       operationKey: 'send:reconcile-exact',
+      senderAddress: 'ada@local.test',
       provider: 'google' as const,
       providerMessageId: 'gmail-confirmed-message',
       providerThreadId: 'gmail-confirmed-thread',
@@ -1199,6 +1200,7 @@ describe('approval and send safety', () => {
     repository.markDispatchStarted('send:unconfirmed', '2026-07-31T12:05:01.000Z');
     const exact = {
       operationKey: 'send:unconfirmed',
+      senderAddress: 'ada@local.test',
       provider: 'google' as const,
       providerMessageId: 'provider-message',
       providerThreadId: null,
@@ -1217,6 +1219,7 @@ describe('approval and send safety', () => {
         recipientAddresses: ['partner@calm.example', 'copied@example.test'],
       },
       { ...exact, subject: 'Different subject' },
+      { ...exact, senderAddress: 'another-mailbox@example.test' },
       { ...exact, occurredAt: '2026-07-31T11:59:00.000Z' },
       { ...exact, occurredAt: '2026-09-01T12:05:02.000Z' },
       { ...exact, reconciledAt: '2026-07-31T11:59:00.000Z' },

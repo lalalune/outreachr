@@ -87,6 +87,13 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
   await expect(
     page.locator('.document-list strong').filter({ hasText: 'Founder Deck.pdf' }),
   ).toBeVisible();
+  await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+  await page.getByLabel('Backup password', { exact: true }).fill('fixture-archive-password');
+  const archiveDownload = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download encrypted backup', exact: true }).click();
+  const archivePath = testInfo.outputPath('workspace.outreachr-cloud-backup');
+  await (await archiveDownload).saveAs(archivePath);
+  await navigation.getByRole('link', { name: 'Documents', exact: true }).click();
   await page.getByRole('button', { name: 'Remove file', exact: true }).click();
   await page
     .getByRole('dialog', { name: 'Remove workspace file?' })
@@ -96,6 +103,17 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
   await expect(
     page.locator('.document-list strong').filter({ hasText: 'Founder Deck.pdf' }),
   ).toHaveCount(0);
+  await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+  await page.getByLabel('Backup password', { exact: true }).fill('fixture-archive-password');
+  const archiveChooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Restore encrypted backup', exact: true }).click();
+  page.once('dialog', (dialog) => void dialog.accept());
+  await (await archiveChooser).setFiles(archivePath);
+  await expect(page.getByRole('status').filter({ hasText: 'Backup restored.' })).toBeVisible();
+  await navigation.getByRole('link', { name: 'Documents', exact: true }).click();
+  await expect(
+    page.locator('.document-list strong').filter({ hasText: 'Founder Deck.pdf' }),
+  ).toBeVisible();
   await navigation.getByRole('link', { name: 'Investors', exact: true }).click();
   await page.getByRole('button', { name: 'Add investor', exact: true }).click();
   const firm = page.getByRole('dialog', { name: 'Add an investor' });
@@ -260,6 +278,35 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
   await expect(page.getByRole('combobox', { name: 'Gmail mailbox', exact: true })).not.toHaveValue(
     '',
   );
+  await navigation.getByRole('link', { name: 'Outreach', exact: true }).click();
+  await page.getByRole('button', { name: /Shaw Fixture/ }).click();
+  const draft = page.getByRole('dialog', { name: 'Message to Shaw Fixture' });
+  await draft.getByRole('button', { name: 'Approve exact message', exact: true }).click();
+  await draft.getByRole('button', { name: 'Send now', exact: true }).click();
+  await expect(draft.getByRole('button', { name: 'Draft follow-up', exact: true })).toBeVisible();
+  expect(await (await page.request.get('http://127.0.0.1:4175/test/mail')).json()).toEqual({
+    count: 1,
+  });
+  await draft.locator('button[aria-label="Close"]').click();
+  await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Sync mail', exact: true }).click();
+  await expect(
+    page.getByRole('status').filter({ hasText: 'Mail reconciliation completed.' }),
+  ).toBeVisible();
+  await navigation.getByRole('link', { name: 'Outreach', exact: true }).click();
+  await page.getByRole('button', { name: 'Draft reply', exact: true }).click();
+  const reply = page.getByRole('dialog', { name: 'Draft conversation message' });
+  await reply
+    .getByRole('textbox')
+    .fill('Thanks for replying. Here is the information you requested.');
+  await reply.getByRole('button', { name: 'Save conversation draft', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Message to Shaw Fixture' })).toBeVisible();
+  await expect(page.getByRole('dialog').getByLabel('Subject', { exact: true })).not.toHaveValue('');
+  await page.getByRole('dialog').locator('button[aria-label="Close"]').click();
+  expect(await (await page.request.get('http://127.0.0.1:4175/test/mail')).json()).toEqual({
+    count: 1,
+  });
+  await page.getByRole('link', { name: 'Workspace settings', exact: true }).click();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Export people CSV' }).click();
   const download = await downloadPromise;

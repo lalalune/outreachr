@@ -110,6 +110,7 @@ const MailboxSendReconciliationSchema = z.object({
     message: 'Mailbox send operation keys must use the send: namespace',
   }),
   provider: z.enum(['google', 'microsoft']),
+  senderAddress: z.string().trim().email().max(320),
   providerMessageId: z.string().trim().min(1).max(4_096),
   providerThreadId: z.string().trim().min(1).max(4_096).nullable().default(null),
   recipientAddresses: z.array(z.string().trim().email().max(320)).min(1).max(500),
@@ -1270,6 +1271,7 @@ export class OutreachrRepository {
   reconcileUnconfirmedSendFromMailbox(input: {
     operationKey: string;
     provider: 'google' | 'microsoft';
+    senderAddress: string;
     providerMessageId: string;
     providerThreadId?: string | null;
     recipientAddresses: readonly string[];
@@ -1282,17 +1284,24 @@ export class OutreachrRepository {
     const value = parsed.data;
     const row = this.vault.one<{
       provider: string;
+      sender_normalized: string;
       recipient_normalized: string;
       reserved_at: string;
       dispatch_status: 'dispatching' | 'ambiguous';
       subject: string;
     }>(
-      `SELECT sl.provider,sl.recipient_normalized,sl.reserved_at,sl.dispatch_status,m.subject
+      `SELECT sl.provider,sl.sender_normalized,sl.recipient_normalized,sl.reserved_at,sl.dispatch_status,m.subject
        FROM send_ledger sl JOIN messages m ON m.id=sl.message_id
        WHERE sl.id=? AND sl.dispatch_status IN ('dispatching','ambiguous')`,
       [value.operationKey],
     );
-    if (!row || row.provider !== value.provider || row.subject !== value.subject) return false;
+    if (
+      !row ||
+      row.provider !== value.provider ||
+      row.subject !== value.subject ||
+      row.sender_normalized !== normalizeEmail(value.senderAddress)
+    )
+      return false;
 
     const recipients = [...new Set(value.recipientAddresses.map(normalizeEmail))];
     if (recipients.length !== 1 || recipients[0] !== row.recipient_normalized) return false;

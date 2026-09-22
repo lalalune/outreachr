@@ -39,3 +39,14 @@ Second slice:
 - Calendar creation persists its operation before provider dispatch and reconciles uncertain results after restart without another create request.
 - Workspace admission bounds same-workspace waiting outside the PostgreSQL pool; concurrent workers reject contention without holding provider calls in a database transaction.
 - Connector integration: 22 tests passed, including threaded sends and restart recovery. Cloud integration: 78 passed, including bounded contention and retried writes.
+
+Third slice (integrated verification in progress):
+
+- Complete encrypted cloud archives include checksummed saved documents and a schema-validated snapshot; restore remaps tenant file references and atomically commits data. It strips credentials and live approvals, and prevents rolling back existing provider-operation history. Chunked uploads support the archive transfer bound without relying on a single large edge request.
+- Fixed the existing backup base64 validator's stack overflow on normal seeded vaults.
+- Added owner archive/reopen and content purge after billing ends, member departure with mailbox removal, and sign-out-all. Financial/authority records remain separate from application content.
+- Recorded paid AI responses rehydrate pending proposals without inference or automatic application. Opt-in mailbox scheduling uses valid member sessions and shows staleness/reconnect status.
+- Mail observations and provider receipts are scoped by mailbox; unconfirmed-send recovery also verifies the sending account.
+- Added database-backed request limits, workspace/invitation quotas, redacted diagnostics, operational procedures, setup guidance and accurate AI/investor-data disclosures.
+- 87 cloud integration tests passed before the final mailbox-scoping/diagnostic changes. Desktop connector and vault integration tests passed (44 tests) before the added mailbox-collision regression. Browser testing exposed busy-workspace contention during billing receipt recovery; bounded retries are now limited to reads and recovery, never new commercial commands. Final rerun remains required.
+- Live browser still returned Cloudflare 1016 on September 22. Railway authentication works, but app/client IDs, inference credential and notification keys are absent. Cloud sign-in as the designated account reaches a personal Dedicated-agent setup gate; no agent purchase was initiated. Registration and real provider acceptance remain unverified.

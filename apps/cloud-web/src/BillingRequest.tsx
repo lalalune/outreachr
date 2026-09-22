@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { post } from './bridge';
+import { ApiError, post } from './bridge';
 
 export interface BillingProgress {
   review: {
@@ -46,14 +46,31 @@ export function BillingRequest({
     setError('');
     if (action === 'expire' && value) onChange({ ...value, cancellationPending: true });
     try {
-      const next = await post<BillingProgress | null>(
-        `${base}/billing/${action === 'expire' ? 'checkout/expire' : action}`,
-        action === 'confirm'
-          ? { id: value!.review.id, billingConsent: 'accepted' }
-          : action === 'expire'
-            ? { id: value!.review.id }
-            : {},
-      );
+      const perform = () =>
+        post<BillingProgress | null>(
+          `${base}/billing/${action === 'expire' ? 'checkout/expire' : action}`,
+          action === 'confirm'
+            ? { id: value!.review.id, billingConsent: 'accepted' }
+            : action === 'expire'
+              ? { id: value!.review.id }
+              : {},
+        );
+      let next: BillingProgress | null = null;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          next = await perform();
+          break;
+        } catch (cause) {
+          if (
+            action !== 'recover' ||
+            !(cause instanceof ApiError) ||
+            cause.code !== 'workspace_busy' ||
+            attempt >= 5
+          )
+            throw cause;
+          await new Promise((resolve) => setTimeout(resolve, Math.min(2000, 250 * 2 ** attempt)));
+        }
+      }
       onChange(next);
       await reload();
     } catch (cause) {

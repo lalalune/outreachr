@@ -9,11 +9,12 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly code?: string,
   ) {
     super(message);
   }
 }
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function api<T>(path: string, init: RequestInit = {}, attempt = 0): Promise<T> {
   const response = await fetch(path, {
     ...init,
     credentials: 'same-origin',
@@ -23,8 +24,28 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...init.headers,
     },
   });
-  const result = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new ApiError(result.error ?? 'The request failed.', response.status);
+  const result = (await response
+    .json()
+    .catch(() => ({ error: 'The service returned an unreadable response. Try again.' }))) as T & {
+    error?: string;
+    code?: string;
+  };
+  if (!response.ok) {
+    if (
+      (!init.method || init.method === 'GET') &&
+      result.code === 'workspace_busy' &&
+      attempt < 4
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+      return api<T>(path, init, attempt + 1);
+    }
+    const requestId = response.headers.get('X-Request-Id');
+    throw new ApiError(
+      `${result.error ?? 'The request failed.'}${requestId ? ` (Request ${requestId})` : ''}`,
+      response.status,
+      result.code,
+    );
+  }
   return result;
 }
 export const post = <T>(path: string, body: unknown) =>
@@ -136,6 +157,8 @@ export function createBridge(orgId: string): OutreachrBridge {
         : post(`${base}/commands`, { name, payload })) as Promise<never>,
     selectFile: (filters) =>
       new Promise((resolve, reject) => {
+        const archive =
+          filters?.some((filter) => filter.extensions.includes('outreachr-cloud-backup')) ?? false;
         const input = document.createElement('input');
         input.type = 'file';
         input.accept =
@@ -151,8 +174,22 @@ export function createBridge(orgId: string): OutreachrBridge {
               resolve(null);
               return;
             }
-            if (file.size > 25 * 1024 * 1024) {
-              reject(new Error('Files must be 25 MB or smaller.'));
+            if (file.size > (archive ? 256 : 25) * 1024 * 1024) {
+              reject(new Error(`Files must be ${archive ? 256 : 25} MB or smaller.`));
+              return;
+            }
+            if (archive) {
+              void (async () => {
+                const paths: string[] = [];
+                for (let offset = 0; offset < file.size; offset += 25 * 1024 * 1024) {
+                  const part = await api<{ path: string }>(`${base}/archives/chunks`, {
+                    method: 'POST',
+                    body: file.slice(offset, offset + 25 * 1024 * 1024),
+                  });
+                  paths.push(part.path);
+                }
+                return post<{ path: string }>(`${base}/archives/assemble`, { paths });
+              })().then((result) => resolve(result.path), reject);
               return;
             }
             void api<{ path: string }>(`${base}/files`, {

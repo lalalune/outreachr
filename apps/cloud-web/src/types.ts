@@ -1,4 +1,5 @@
 export interface Organization {
+  archived_at?: string | null;
   id: string;
   name: string;
   role: 'owner' | 'admin' | 'member' | 'viewer';

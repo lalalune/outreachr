@@ -74,6 +74,36 @@ export function UpNextPage(): React.JSX.Element {
         }
       />
 
+      {data.hosting === 'cloud' && (
+        <Section title="Workspace setup">
+          <p>
+            Complete these steps before your first send. Every message still requires your review
+            and approval.
+          </p>
+          <ul>
+            <li>
+              {data.knowledge.length ? '✓ Company context saved' : 'Add company context'} —{' '}
+              <a href="#/knowledge">Company knowledge</a>
+            </li>
+            <li>
+              {data.counts.targeted
+                ? '✓ Shortlist started'
+                : 'Choose investors and verify their sources'}{' '}
+              — <a href="#/investors">Investors</a>
+            </li>
+            <li>
+              {data.communicationPolicy.postalAddress
+                ? '✓ Sender address configured'
+                : 'Connect Gmail and enter your real sender postal address'}{' '}
+              — <a href="#/settings">Configure sending</a>
+            </li>
+            <li>
+              {data.drafts.length ? '✓ Draft prepared' : 'Prepare your first draft'} —{' '}
+              <a href="#/outreach">Review outreach</a>
+            </li>
+          </ul>
+        </Section>
+      )}
       <div className="momentum-strip" aria-label="Round momentum">
         <div>
           <span>Targeted</span>

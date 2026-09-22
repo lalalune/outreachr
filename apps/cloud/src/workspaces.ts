@@ -60,6 +60,8 @@ export interface Organization extends QueryResultRow {
   cloud_administrators?: string[];
   cloud_membership_ready?: boolean;
   cloud_sync_job_id?: string | null;
+  archived_at?: Date | null;
+  deleted_at?: Date | null;
   cancel_at_period_end: boolean;
 }
 interface UserRow extends QueryResultRow {
@@ -109,6 +111,8 @@ export function entitlement(org: Organization, now: Date) {
     active: paid || trial,
     trial,
     canEdit:
+      !org.archived_at &&
+      !org.deleted_at &&
       isEditor(org.role) &&
       org.cloud_membership_ready !== false &&
       (paid || trial) &&
@@ -129,7 +133,7 @@ export async function memberOrganization(
 ): Promise<Organization> {
   const result = await client.query<Organization>(
     `SELECT o.*, m.role,m.cloud_membership_ready,m.cloud_sync_job_id,(SELECT count(*)::int FROM outreachr.memberships active WHERE active.org_id=o.id AND active.role!='viewer') AS editing_members FROM outreachr.organizations o
-      JOIN outreachr.memberships m ON m.org_id=o.id WHERE o.id=$1 AND m.user_id=$2`,
+      JOIN outreachr.memberships m ON m.org_id=o.id WHERE o.id=$1 AND m.user_id=$2 AND o.deleted_at IS NULL`,
     [orgId, userId],
   );
   const org = result.rows[0];
@@ -191,7 +195,15 @@ export class WorkspaceStore {
         [identity.id],
       );
       const user = found.rows[0]!;
-      if (!user.default_org_id && createDefault) {
+      if (
+        !user.default_org_id &&
+        createDefault &&
+        !(
+          await client.query('SELECT 1 FROM outreachr.organizations WHERE created_by=$1 LIMIT 1', [
+            identity.id,
+          ])
+        ).rowCount
+      ) {
         const orgId = randomUUID();
         const now = this.now();
         const trialEnd =
@@ -237,7 +249,7 @@ export class WorkspaceStore {
     return (
       await this.pool.query<Organization>(
         `SELECT o.*,m.role,m.cloud_membership_ready,m.cloud_sync_job_id,(SELECT count(*)::int FROM outreachr.memberships active WHERE active.org_id=o.id AND active.role!='viewer') AS editing_members FROM outreachr.organizations o JOIN outreachr.memberships m ON o.id=m.org_id
-      WHERE m.user_id=$1 ORDER BY o.created_at,o.id`,
+      WHERE m.user_id=$1 AND o.deleted_at IS NULL ORDER BY o.created_at,o.id`,
         [userId],
       )
     ).rows;
@@ -246,6 +258,18 @@ export class WorkspaceStore {
   async create(userId: string, name: string): Promise<Organization> {
     return transaction(this.pool, async (client) => {
       await client.query('SELECT id FROM outreachr.users WHERE id=$1 FOR UPDATE', [userId]);
+      const count = (
+        await client.query<{ count: number }>(
+          'SELECT count(*)::int AS count FROM outreachr.organizations WHERE created_by=$1 AND deleted_at IS NULL',
+          [userId],
+        )
+      ).rows[0]!.count;
+      requireCondition(
+        count < 20,
+        429,
+        'workspace_limit',
+        'This account has reached the limit of 20 active workspaces.',
+      );
       const owned = await client.query(
         'SELECT 1 FROM outreachr.organizations WHERE created_by=$1 LIMIT 1',
         [userId],
@@ -319,6 +343,18 @@ export class WorkspaceStore {
         [orgId, normalized, this.now()],
       );
       const token = newToken();
+      const pending = (
+        await client.query<{ count: number }>(
+          'SELECT count(*)::int AS count FROM outreachr.invites WHERE org_id=$1 AND consumed_by IS NULL AND revoked_at IS NULL AND expires_at>now()',
+          [orgId],
+        )
+      ).rows[0]!.count;
+      requireCondition(
+        pending < 100,
+        429,
+        'invitation_limit',
+        'Revoke unused invitations before creating more.',
+      );
       const id = randomUUID();
       const expiresAt = new Date(this.now().getTime() + INVITE_DAYS * dayMs);
       await client.query(
@@ -522,12 +558,101 @@ export class WorkspaceStore {
           targetId,
         ]);
         await client.query(
-          `UPDATE outreachr.users SET default_org_id=(SELECT org_id FROM outreachr.memberships WHERE user_id=$1 ORDER BY joined_at LIMIT 1) WHERE id=$1 AND default_org_id=$2`,
+          `UPDATE outreachr.users SET default_org_id=(SELECT org_id FROM outreachr.memberships WHERE user_id=$1 AND org_id IN (SELECT id FROM outreachr.organizations WHERE deleted_at IS NULL) ORDER BY joined_at LIMIT 1) WHERE id=$1 AND default_org_id=$2`,
           [targetId, orgId],
         );
       }
+      if (role === null)
+        await client.query('DELETE FROM outreachr.mailboxes WHERE org_id=$1 AND user_id=$2', [
+          orgId,
+          targetId,
+        ]);
       await enqueueMembershipChange(client, org, targetId, role);
       await audit(client, orgId, userId, 'membership.changed', { targetId, role });
+    });
+  }
+
+  async archive(userId: string, orgId: string, archived: boolean): Promise<void> {
+    await transaction(this.pool, async (client) => {
+      await lockOrganization(client, orgId);
+      const org = await memberOrganization(client, userId, orgId);
+      requireCondition(
+        org.role === 'owner' && org.cloud_membership_ready !== false,
+        403,
+        'owner_required',
+        'Only a workspace owner can archive or reopen a workspace.',
+      );
+      await client.query('UPDATE outreachr.organizations SET archived_at=$2 WHERE id=$1', [
+        orgId,
+        archived ? this.now() : null,
+      ]);
+      await audit(client, orgId, userId, archived ? 'workspace.archived' : 'workspace.reopened');
+    });
+  }
+
+  /** Purges application content. Cloud remains authoritative for financial records and shared identity. */
+  async deleteWorkspace(userId: string, orgId: string, confirmation: string): Promise<void> {
+    await transaction(this.pool, async (client) => {
+      await lockOrganization(client, orgId);
+      const org = await memberOrganization(client, userId, orgId);
+      requireCondition(
+        org.role === 'owner' && org.cloud_membership_ready !== false,
+        403,
+        'owner_required',
+        'Only a workspace owner can delete workspace data.',
+      );
+      requireCondition(
+        confirmation === org.name,
+        400,
+        'workspace_name_required',
+        'Enter the exact workspace name to confirm deletion.',
+      );
+      requireCondition(
+        !org.cloud_ownership_pending,
+        409,
+        'ownership_change_pending',
+        'Finish ownership reconciliation before deleting this workspace.',
+      );
+      requireCondition(
+        !org.subscription_id ||
+          ['canceled', 'incomplete_expired'].includes(org.subscription_status),
+        409,
+        'cancel_subscription_first',
+        'Cancel the subscription and wait for its paid period to end before deleting the workspace. Archiving does not cancel billing.',
+      );
+      if (org.cloud_billing_account_id)
+        requireCondition(
+          !org.cloud_billing_invalidated &&
+            org.cloud_billing_observed_at &&
+            org.cloud_billing_observed_at.getTime() > this.now().getTime() - 300000,
+          409,
+          'billing_refresh_required',
+          'Refresh the Cloud billing status before deleting workspace data.',
+        );
+      const pending = await client.query(
+        "SELECT 1 FROM outreachr.cloud_billing_intents WHERE org_id=$1 AND state='pending' UNION ALL SELECT 1 FROM outreachr.cloud_ownership_jobs WHERE org_id=$1 AND state='pending' LIMIT 1",
+        [orgId],
+      );
+      requireCondition(
+        pending.rowCount === 0,
+        409,
+        'billing_operation_pending',
+        'Resolve pending billing and ownership operations before deleting data.',
+      );
+      await client.query('DELETE FROM outreachr.vaults WHERE org_id=$1', [orgId]);
+      await client.query('DELETE FROM outreachr.files WHERE org_id=$1', [orgId]);
+      await client.query('DELETE FROM outreachr.mailboxes WHERE org_id=$1', [orgId]);
+      await client.query('DELETE FROM outreachr.invites WHERE org_id=$1', [orgId]);
+      await client.query('UPDATE outreachr.usage SET response_json=NULL WHERE org_id=$1', [orgId]);
+      await client.query("UPDATE outreachr.audit SET detail='{}' WHERE org_id=$1", [orgId]);
+      await client.query(
+        "UPDATE outreachr.organizations SET name='Deleted workspace',deleted_at=$2,archived_at=$2 WHERE id=$1",
+        [orgId, this.now()],
+      );
+      await client.query('UPDATE outreachr.users SET default_org_id=NULL WHERE default_org_id=$1', [
+        orgId,
+      ]);
+      await audit(client, orgId, userId, 'workspace.content_purged');
     });
   }
 

@@ -695,6 +695,67 @@ fixture.get('/api/v1/app-auth/delegations/google/connections', (c) => {
       : [],
   });
 });
+const sentFixtureMail: Array<{ id: string; raw: string }> = [];
+fixture.get('/test/mail', (c) => c.json({ count: sentFixtureMail.length }));
+fixture.post('/api/v1/app-auth/delegations/google/request', async (c) => {
+  const user = grants.get(c.req.header('X-App-Delegation') ?? '');
+  if (!user) return c.json({ error: 'Signed out' }, 401);
+  const input = await c.req.json<{
+    connectionId: string;
+    url: string;
+    method: string;
+    body?: string;
+  }>();
+  const account = googleAccounts.get(user.id);
+  if (account?.id !== input.connectionId) return c.json({ error: 'Wrong connection' }, 403);
+  const url = new URL(input.url);
+  if (url.href === 'https://openidconnect.googleapis.com/v1/userinfo')
+    return c.json({ email: account.email });
+  if (url.origin !== 'https://gmail.googleapis.com')
+    return c.json({ error: 'Unsupported fixture provider' }, 400);
+  const root = '/gmail/v1/users/me/messages';
+  if (url.pathname === `${root}/send` && input.method === 'POST') {
+    const body = JSON.parse(input.body ?? '{}') as { raw: string };
+    const id = `sent-${sentFixtureMail.length + 1}`;
+    sentFixtureMail.push({ id, raw: Buffer.from(body.raw, 'base64url').toString('utf8') });
+    return c.json({ id, threadId: 'fixture-conversation' });
+  }
+  if (url.pathname === root)
+    return c.json({
+      messages: sentFixtureMail.length
+        ? [...sentFixtureMail.map(({ id }) => ({ id })), { id: 'incoming-reply' }]
+        : [],
+    });
+  const sent = sentFixtureMail.find(({ id }) => url.pathname === `${root}/${id}`);
+  const incoming = sentFixtureMail.length && url.pathname === `${root}/incoming-reply`;
+  if (!sent && !incoming) return c.json({ error: 'Unknown fixture message' }, 404);
+  const header = (name: string) =>
+    sentFixtureMail[0]!.raw
+      .split('\r\n')
+      .find((line) => line.toLowerCase().startsWith(`${name.toLowerCase()}:`))
+      ?.slice(name.length + 1)
+      .trim() ?? '';
+  return c.json({
+    id: sent?.id ?? 'incoming-reply',
+    threadId: 'fixture-conversation',
+    labelIds: incoming ? ['INBOX'] : ['SENT'],
+    internalDate: String(Date.now()),
+    payload: {
+      headers: [
+        { name: 'From', value: incoming ? 'shaw@example.test' : account.email },
+        { name: 'To', value: incoming ? account.email : 'shaw@example.test' },
+        { name: 'Subject', value: header('Subject') },
+        {
+          name: 'Message-ID',
+          value: incoming ? '<incoming-reply@example.test>' : header('Message-ID'),
+        },
+        ...(incoming
+          ? []
+          : [{ name: 'X-Outreachr-Operation-Key', value: header('X-Outreachr-Operation-Key') }]),
+      ],
+    },
+  });
+});
 fixture.get('/api/v1/models', (c) =>
   c.json({
     data: [

@@ -37,6 +37,11 @@ export function Settings({
   const [invites, setInvites] = useState<Invite[]>([]);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [connectionId, setConnectionId] = useState('');
+  const [mailSync, setMailSync] = useState<{
+    enabled: boolean;
+    lastSyncAt: string | null;
+    error: string | null;
+  } | null>(null);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('viewer');
   const [inviteUrl, setInviteUrl] = useState('');
@@ -56,6 +61,7 @@ export function Settings({
   } | null>(null);
   const [postal, setPostal] = useState(data?.communicationPolicy.postalAddress ?? '');
   const [password, setPassword] = useState('');
+  const [deleteName, setDeleteName] = useState('');
   const ownershipReady =
     org.cloud_provisioning_state !== 'pending' &&
     (!org.cloud_billing_account_id ||
@@ -66,7 +72,7 @@ export function Settings({
     ownershipReady;
   const load = useCallback(async () => {
     const generation = ++loadGeneration.current;
-    const [people, pending, mailboxes, selected, usage] = await Promise.allSettled([
+    const [people, pending, mailboxes, selected, usage, sync] = await Promise.allSettled([
       api<Member[]>(`${base}/members`),
       admin ? api<Invite[]>(`${base}/invites`) : [],
       api<Connection[]>('/api/google/connections'),
@@ -74,10 +80,14 @@ export function Settings({
       api<{ usedCents: number; allowanceCents: number; reservedCents?: number; source: string }>(
         `${base}/usage`,
       ),
+      api<{ enabled: boolean; lastSyncAt: string | null; error: string | null } | null>(
+        `${base}/mailbox/sync`,
+      ),
     ]);
     // A previous focus refresh must not replace the latest settings or its recovery state.
     if (generation !== loadGeneration.current) return false;
     // Optional Google setup must not hide loaded membership and billing controls.
+    setMailSync(sync.status === 'fulfilled' ? sync.value : null);
     setMembers(people.status === 'fulfilled' ? people.value : []);
     setInvites(pending.status === 'fulfilled' ? pending.value : []);
     setConnections(mailboxes.status === 'fulfilled' ? mailboxes.value : []);
@@ -452,6 +462,39 @@ export function Settings({
       <section>
         <h2>Your Gmail account</h2>
         <p>
+          Imported relationship activity is shared with workspace members. Background sync checks
+          for replies about every five minutes while a valid Outreachr session and editing
+          entitlement remain available. Signing out of all sessions pauses it. This never sends
+          messages.
+        </p>
+        {mailSync && (
+          <>
+            <label>
+              <input
+                type="checkbox"
+                checked={mailSync.enabled}
+                disabled={busy || (!mailSync.enabled && !org.entitlement.canEdit)}
+                onChange={(event) => {
+                  const enabled = event.target.checked;
+                  void act(() => post(`${base}/mailbox/sync`, { enabled }));
+                }}
+              />
+              Enable background mailbox reconciliation
+            </label>
+            <p role="status">
+              Last background sync:{' '}
+              {mailSync.lastSyncAt
+                ? new Date(mailSync.lastSyncAt).toLocaleString()
+                : 'Not completed yet'}
+              .{' '}
+              {mailSync.error
+                ? `Sync needs attention (${mailSync.error}). Sign in or reconnect, then try a manual sync.`
+                : ''}
+            </p>
+          </>
+        )}
+
+        <p>
           Your mailbox authorization stays with your Eliza account. Other members select their own
           mailbox.
         </p>
@@ -481,7 +524,7 @@ export function Settings({
           </select>
         </label>
         <button
-          disabled={!org.entitlement.canEdit || busy}
+          disabled={(!org.entitlement.canEdit && Boolean(connectionId)) || busy}
           onClick={() =>
             void act(async () => {
               await post(`${base}/mailbox`, { connectionId: connectionId || null });
@@ -490,6 +533,17 @@ export function Settings({
           }
         >
           Save mailbox
+        </button>
+        <button
+          disabled={busy || !mailSync}
+          onClick={() =>
+            void act(
+              () => post(`${base}/mailbox`, { connectionId: null }),
+              'Mailbox disconnected from this workspace.',
+            )
+          }
+        >
+          Disconnect workspace mailbox
         </button>
         <button
           disabled={!connectionId || busy}
@@ -579,7 +633,10 @@ export function Settings({
         <h2>Export and backup</h2>
         <p>
           Read and export access remains available after the trial. Encrypted backups require your
-          password to restore.
+          password to restore. Cloud archives include CRM records and saved documents; temporary
+          uploads, login credentials, memberships and billing are excluded. Restore requires a
+          workspace without email or calendar history. Reconnect provider accounts and review drafts
+          after restoring.
         </p>
         {(['investors', 'people', 'pipeline', 'activity'] as const).map((kind) => (
           <button
@@ -627,9 +684,15 @@ export function Settings({
             disabled={busy || password.length < 12 || !org.entitlement.canEdit}
             onClick={() =>
               void act(async () => {
-                const path = await window.outreachr.selectFile();
+                const path = await window.outreachr.selectFile([
+                  { name: 'Outreachr cloud archive', extensions: ['outreachr-cloud-backup'] },
+                ]);
                 if (path) {
-                  if (!window.confirm('Replace this workspace with the selected encrypted backup?'))
+                  if (
+                    !window.confirm(
+                      'Replace the records and documents in this workspace with the encrypted archive? This requires a workspace without email or calendar history.',
+                    )
+                  )
                     return;
                   await command('backup.restore', { path, password });
                 }
@@ -637,6 +700,119 @@ export function Settings({
             }
           >
             Restore encrypted backup
+          </button>
+        )}
+      </section>
+      <section>
+        <h2>Leave or close this workspace</h2>
+        <button
+          disabled={busy}
+          onClick={() =>
+            void act(async () => {
+              await post('/api/auth/logout-all', {});
+              window.location.assign('/');
+            })
+          }
+        >
+          Sign out of all Outreachr sessions
+        </button>
+        <p>
+          Export your data first. Leaving removes your access and selected mailbox. It does not
+          delete shared records or lower the workspace's purchased seat count. The last owner must
+          transfer ownership first.
+        </p>
+        <button
+          disabled={busy}
+          onClick={() => {
+            if (window.confirm('Leave this workspace and remove your access?'))
+              void act(async () => {
+                await post(`${base}/leave`, {});
+                window.location.assign('/');
+              });
+          }}
+        >
+          Leave workspace
+        </button>
+        {org.role === 'owner' && (
+          <>
+            <p>
+              Archiving pauses editing, AI and sending while preserving read and export access. It
+              does not cancel your subscription. Use billing above to cancel.
+            </p>
+            <button
+              disabled={busy}
+              onClick={() =>
+                void act(
+                  async () => {
+                    await post(`${base}/archive`, { archived: !org.archived_at });
+                    await reload();
+                  },
+                  org.archived_at ? 'Workspace reopened.' : 'Workspace archived.',
+                )
+              }
+            >
+              {org.archived_at ? 'Reopen workspace' : 'Archive workspace'}
+            </button>
+            <p>
+              Delete permanently removes this workspace's CRM records, saved documents, AI
+              responses, invitations and mailbox selections. It is available after paid billing
+              ends. Minimal billing, membership and audit records remain. This does not delete your
+              Eliza identity, other apps, or messages already sent through your provider.
+            </p>
+            <label>
+              Enter workspace name to delete
+              <input
+                value={deleteName}
+                onChange={(event) => setDeleteName(event.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            <button
+              disabled={busy || deleteName !== org.name}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    'Permanently delete workspace records and documents for every member? This cannot be undone.',
+                  )
+                )
+                  void act(async () => {
+                    await post(`${base}/delete`, { confirmation: deleteName });
+                    window.location.assign('/');
+                  });
+              }}
+            >
+              Permanently delete workspace data
+            </button>
+          </>
+        )}
+      </section>
+      <section>
+        <h2>Help and diagnostics</h2>
+        <p>
+          <a href="/help.html" target="_blank" rel="noreferrer">
+            Read the hosted app guide
+          </a>
+          . Error messages include a request ID. Share that ID when reporting a problem; never
+          include message bodies, documents, tokens or payment details in public reports.
+        </p>
+        {admin && (
+          <button
+            disabled={busy}
+            onClick={() =>
+              void act(async () => {
+                const report = await api(`${base}/diagnostics`);
+                const url = URL.createObjectURL(
+                  new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }),
+                );
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'outreachr-diagnostics.json';
+                link.click();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+              }, 'Diagnostics downloaded. Review the file before sharing it.')
+            }
+          >
+            Download redacted diagnostics
           </button>
         )}
       </section>

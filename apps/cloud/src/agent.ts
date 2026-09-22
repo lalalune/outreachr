@@ -1,5 +1,4 @@
 /** Keeps cloud inference proposal-only and persists allowance before provider invocation. */
-import { randomUUID } from 'node:crypto';
 import {
   AGENT_RESULT_JSON_SCHEMA,
   SYSTEM_PROMPT,
@@ -141,22 +140,13 @@ export class CloudAgent implements AgentPort {
         'inference_incomplete',
         'The model did not finish its response. No proposals were applied.',
       );
-      let allowlist = createAllowlist();
-      for (const capability of [
-        'propose.draft',
-        'propose.task',
-        'propose.pipeline_move',
-        'propose.note',
-        'propose.research',
-      ] as const)
-        allowlist = grantCapability(allowlist, { capability, provider: 'codex' });
-      const result = parseAgentResult(response.choices[0]!.message.content, allowlist, 'codex');
-      for (const proposal of result.proposals)
+      const result = parseCloudResult(response.choices[0]!.message.content);
+      for (const [index, proposal] of result.proposals.entries())
         await request.onEvent({
           runId: request.runId,
           type: 'tool_proposal',
           text: proposal.title,
-          proposalId: `proposal:${randomUUID()}`,
+          proposalId: `proposal:${request.runId}:${index}`,
           proposal: {
             kind: proposal.kind,
             title: proposal.title,
@@ -166,6 +156,10 @@ export class CloudAgent implements AgentPort {
           },
         });
       await request.onEvent({ runId: request.runId, type: 'completed', text: result.summary });
+      await client.query(
+        'UPDATE outreachr.usage SET recovered_at=now() WHERE id=$1 AND org_id=$2',
+        [reservation.id, organization.id],
+      );
     } catch (error) {
       if (reservation && !settled)
         await usage.settle(
@@ -188,4 +182,17 @@ export class CloudAgent implements AgentPort {
     }
     return { runId: request.runId };
   }
+}
+
+export function parseCloudResult(content: string | null) {
+  let allowlist = createAllowlist();
+  for (const capability of [
+    'propose.draft',
+    'propose.task',
+    'propose.pipeline_move',
+    'propose.note',
+    'propose.research',
+  ] as const)
+    allowlist = grantCapability(allowlist, { capability, provider: 'codex' });
+  return parseAgentResult(content, allowlist, 'codex');
 }

@@ -190,6 +190,8 @@ function CloudApp() {
           </p>
         )}
         <footer>
+          <a href="/help.html">Hosted app guide</a> ·{' '}
+          <a href="/legal/data-handling.html">Data handling</a> ·{' '}
           <a href="/legal/license.txt">License</a> · <a href="/legal/notice.txt">Notice</a>
         </footer>
       </main>
@@ -267,23 +269,25 @@ function CloudApp() {
         </div>
       )}
       <div className="cloud-banner">
-        {org.cloud_provisioning_state === 'pending'
-          ? 'Cloud workspace setup is being confirmed. Read and export remain available.'
-          : org.cloud_provisioning_state === 'failed'
-            ? 'Cloud workspace setup could not be completed. Retry setup to continue.'
-            : org.cloud_provisioning_state === 'migration_required'
-              ? 'Existing workspace billing history needs reconciliation. Read and export remain available.'
-              : org.cloud_provisioning_state === 'ineligible'
-                ? 'The free trial has already been used. Choose a workspace subscription for editing, AI and email.'
-                : org.cloud_provisioning_state === 'ready' && org.subscription_status === 'none'
-                  ? 'Choose a workspace subscription for editing, AI and email. Read and export remain available.'
-                  : org.cloud_membership_ready === false
-                    ? 'Cloud access is synchronizing. Read and export remain available.'
-                    : org.entitlement.trial
-                      ? `Free trial through ${new Date(org.trial_ends_at!).toLocaleDateString()}`
-                      : org.entitlement.active
-                        ? `${org.plan === 'sol' ? 'Sol' : 'Astra'} plan`
-                        : 'Subscription required to edit, use AI, or send mail. Read and export remain available.'}
+        {org.archived_at
+          ? 'Workspace archived. Read and export remain available. Billing continues until canceled.'
+          : org.cloud_provisioning_state === 'pending'
+            ? 'Cloud workspace setup is being confirmed. Read and export remain available.'
+            : org.cloud_provisioning_state === 'failed'
+              ? 'Cloud workspace setup could not be completed. Retry setup to continue.'
+              : org.cloud_provisioning_state === 'migration_required'
+                ? 'Existing workspace billing history needs reconciliation. Read and export remain available.'
+                : org.cloud_provisioning_state === 'ineligible'
+                  ? 'The free trial has already been used. Choose a workspace subscription for editing, AI and email.'
+                  : org.cloud_provisioning_state === 'ready' && org.subscription_status === 'none'
+                    ? 'Choose a workspace subscription for editing, AI and email. Read and export remain available.'
+                    : org.cloud_membership_ready === false
+                      ? 'Cloud access is synchronizing. Read and export remain available.'
+                      : org.entitlement.trial
+                        ? `Free trial through ${new Date(org.trial_ends_at!).toLocaleDateString()}`
+                        : org.entitlement.active
+                          ? `${org.plan === 'sol' ? 'Sol' : 'Astra'} plan`
+                          : 'Subscription required to edit, use AI, or send mail. Read and export remain available.'}
         {org.role === 'viewer' && ' · Viewer access'}
         {['pending', 'failed'].includes(org.cloud_provisioning_state ?? '') &&
           org.created_by === account.user.id && (

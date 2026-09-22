@@ -58,6 +58,34 @@ describe('VaultService with the production investor seed', () => {
     await Promise.all(directories.splice(0).map(removeTemporaryDirectory));
   });
 
+  it('isolates matching calendar event identifiers across provider accounts', async () => {
+    const { service } = await create();
+    const event = {
+      id: 'shared-id',
+      title: 'First account',
+      start: { dateTime: '2026-09-22T12:00:00.000Z' },
+      end: { dateTime: '2026-09-22T12:30:00.000Z' },
+      status: 'confirmed' as const,
+    };
+    await service.importCalendarEvents('google', [event], 'first@example.test');
+    await service.importCalendarEvents(
+      'google',
+      [{ ...event, title: 'Second account' }],
+      'second@example.test',
+    );
+    await service.importCalendarEvents(
+      'google',
+      [{ ...event, title: 'Updated first' }],
+      'first@example.test',
+    );
+    expect(
+      service.vault.all('SELECT title,external_calendar_id FROM meetings ORDER BY title'),
+    ).toEqual([
+      { title: 'Second account', external_calendar_id: 'google:second@example.test:shared-id' },
+      { title: 'Updated first', external_calendar_id: 'google:first@example.test:shared-id' },
+    ]);
+  });
+
   it('removes a document reference with an audit record while keeping unrelated knowledge', async () => {
     const { service } = await create();
     const document = await service.saveKnowledge({
@@ -1535,6 +1563,36 @@ describe('VaultService with the production investor seed', () => {
       'Seed file is larger than the 256 MiB safety limit.',
     );
     expect(Number(service.vault.scalar('SELECT COUNT(*) FROM audit_log'))).toBe(auditCount);
+    expect(service.integrityCheck().ok).toBe(true);
+  });
+  it('keeps identical provider message identifiers separate across mailboxes', async () => {
+    const { service } = await create();
+    const messages = [
+      {
+        id: 'same-provider-id',
+        provider: 'google' as const,
+        threadId: 'same-thread',
+        internetMessageId: '<fixture@example.test>',
+        from: { email: 'first@example.test' },
+        to: [{ email: 'recipient@example.test' }],
+        subject: 'First mailbox',
+        occurredAt: '2026-09-22T12:00:00.000Z',
+        direction: 'outbound' as const,
+      },
+    ];
+    await service.importMailboxMessages('google', 'first@example.test', messages);
+    await service.importMailboxMessages('google', 'second@example.test', [
+      { ...messages[0]!, from: { email: 'second@example.test' }, subject: 'Second mailbox' },
+    ]);
+    await service.importMailboxMessages('google', 'first@example.test', messages);
+    const rows = service.vault.all<{ account_email: string; subject: string }>(
+      'SELECT account_email,subject FROM mail_events WHERE provider_message_id=? ORDER BY account_email',
+      ['same-provider-id'],
+    );
+    expect(rows).toEqual([
+      { account_email: 'first@example.test', subject: 'First mailbox' },
+      { account_email: 'second@example.test', subject: 'Second mailbox' },
+    ]);
     expect(service.integrityCheck().ok).toBe(true);
   });
 });

@@ -8,6 +8,10 @@ export async function migrate(pool: Pool): Promise<void> {
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('outreachr:migrations', 0))");
     await client.query(`
       CREATE SCHEMA IF NOT EXISTS outreachr;
+      CREATE TABLE IF NOT EXISTS outreachr.request_buckets (
+        key text NOT NULL, window_start bigint NOT NULL, requests integer NOT NULL,
+        PRIMARY KEY(key,window_start)
+      );
       CREATE TABLE IF NOT EXISTS outreachr.users (
         id text PRIMARY KEY,
         email text NOT NULL,
@@ -32,6 +36,8 @@ export async function migrate(pool: Pool): Promise<void> {
         cancel_at_period_end boolean NOT NULL DEFAULT false,
         created_at timestamptz NOT NULL DEFAULT now()
       );
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+      ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
       ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS trial_started_at timestamptz;
       ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_provisioning_state text CHECK (cloud_provisioning_state IN ('pending','ready','ineligible','failed','migration_required'));
       ALTER TABLE outreachr.organizations ADD COLUMN IF NOT EXISTS cloud_trial_requested boolean NOT NULL DEFAULT false;
@@ -126,6 +132,10 @@ export async function migrate(pool: Pool): Promise<void> {
         selected_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY(org_id,user_id)
       );
+      ALTER TABLE outreachr.mailboxes ADD COLUMN IF NOT EXISTS background_sync boolean NOT NULL DEFAULT false;
+      ALTER TABLE outreachr.mailboxes ADD COLUMN IF NOT EXISTS next_sync_at timestamptz NOT NULL DEFAULT now();
+      ALTER TABLE outreachr.mailboxes ADD COLUMN IF NOT EXISTS last_sync_at timestamptz;
+      ALTER TABLE outreachr.mailboxes ADD COLUMN IF NOT EXISTS sync_error text;
       CREATE TABLE IF NOT EXISTS outreachr.login_states (
         token_hash text PRIMARY KEY,
         expires_at timestamptz NOT NULL,
@@ -147,6 +157,8 @@ export async function migrate(pool: Pool): Promise<void> {
         expires_at timestamptz,
         created_at timestamptz NOT NULL DEFAULT now()
       );
+      ALTER TABLE outreachr.files DROP CONSTRAINT IF EXISTS files_purpose_check;
+      ALTER TABLE outreachr.files ADD CONSTRAINT files_purpose_check CHECK (purpose IN ('upload','download','archive_upload','archive_download','archive_part'));
       CREATE INDEX IF NOT EXISTS files_org ON outreachr.files(org_id);
       CREATE TABLE IF NOT EXISTS outreachr.usage (
         id uuid PRIMARY KEY,
@@ -162,6 +174,7 @@ export async function migrate(pool: Pool): Promise<void> {
         UNIQUE (org_id, request_key)
       );
       ALTER TABLE outreachr.usage ADD COLUMN IF NOT EXISTS response_json jsonb;
+      ALTER TABLE outreachr.usage ADD COLUMN IF NOT EXISTS recovered_at timestamptz;
       CREATE INDEX IF NOT EXISTS usage_period ON outreachr.usage(org_id,period_key);
       CREATE TABLE IF NOT EXISTS outreachr.checkout_attempts (
         id uuid PRIMARY KEY,

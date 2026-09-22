@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
@@ -798,7 +798,8 @@ export class ConnectorService {
       );
     }
     const syncedAt = this.#now().toISOString();
-    await this.#vault.importCalendarEvents(provider, events);
+    if (!config.accountLabel) throw new Error('Reconnect the intended calendar account first.');
+    await this.#vault.importCalendarEvents(provider, events, config.accountLabel);
     this.#vault.repository.upsertConnectorConfig({
       id: this.#vault.connectorId(provider),
       provider,
@@ -906,10 +907,10 @@ export class ConnectorService {
       [JSON.stringify(event), this.#now().toISOString(), operationKey],
     );
     await this.#vault.persist();
-    await this.#vault.importCalendarEvents(input.provider, [event]);
+    await this.#vault.importCalendarEvents(input.provider, [event], account);
     const meetingId = this.#vault.vault.scalar(
       'SELECT id FROM meetings WHERE external_calendar_id=?',
-      [`${input.provider}:${event.id}`],
+      [`${input.provider}:${normalizeEmail(account)}:${event.id}`],
     );
     if (typeof meetingId !== 'string')
       throw new Error(

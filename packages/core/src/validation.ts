@@ -411,7 +411,10 @@ export const BackupEnvelopeSchema = z.object({
     .string()
     .min(1)
     .max(715_827_884)
-    .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u),
+    .refine(
+      (value) => value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/u.test(value),
+      'Invalid base64 ciphertext',
+    ),
 });
 export type BackupEnvelope = z.infer<typeof BackupEnvelopeSchema>;
 
