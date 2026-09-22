@@ -1,4 +1,7 @@
 import { defineConfig } from '@playwright/test';
+const browserName = process.env.OUTREACHR_TEST_BROWSER ?? 'chromium';
+if (browserName !== 'chromium' && browserName !== 'firefox' && browserName !== 'webkit')
+  throw new Error('Choose chromium, firefox or webkit for browser verification.');
 export default defineConfig({
   testDir: './test',
   workers: 1,
@@ -7,6 +10,7 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   use: {
     baseURL: 'http://127.0.0.1:4173',
+    browserName,
     headless: true,
     viewport: { width: 1440, height: 1000 },
     trace: 'retain-on-failure',
