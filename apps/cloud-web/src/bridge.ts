@@ -31,6 +31,7 @@ export async function api<T>(path: string, init: RequestInit = {}, attempt = 0):
     code?: string;
   };
   if (!response.ok) {
+    if (response.status === 401) window.dispatchEvent(new Event('outreachr:session-expired'));
     if (
       (!init.method || init.method === 'GET') &&
       result.code === 'workspace_busy' &&
@@ -67,6 +68,7 @@ export function createBridge(orgId: string): OutreachrBridge {
           headers: { 'Content-Type': 'application/json', 'X-Outreachr-Request': '1' },
           body: JSON.stringify({ name: 'agent.run', payload }),
         });
+        if (response.status === 401) window.dispatchEvent(new Event('outreachr:session-expired'));
         if (!response.ok || !response.body)
           throw new Error(
             ((await response.json()) as { error?: string }).error ?? 'The AI request failed.',

@@ -1,7 +1,7 @@
 import '@fontsource-variable/inter';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/500.css';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from '../../desktop/src/renderer/src/App';
 import { AgentPage } from '../../desktop/src/renderer/src/pages/AgentPage';
@@ -21,6 +21,11 @@ function CloudApp() {
   const [account, setAccount] = useState<Account | null>(null);
   const [loading, setLoading] = useState(true);
   const [reauthRequired, setReauthRequired] = useState(false);
+  const renewalDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (reauthRequired && renewalDialog.current && !renewalDialog.current.open)
+      renewalDialog.current.showModal();
+  }, [reauthRequired]);
   const [error, setError] = useState('');
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -73,9 +78,12 @@ function CloudApp() {
           );
       });
     };
+    const sessionExpired = () => setReauthRequired(true);
+    window.addEventListener('outreachr:session-expired', sessionExpired);
     window.addEventListener('focus', refreshAccount);
     const timer = membershipPending ? window.setInterval(refreshAccount, 15_000) : undefined;
     return () => {
+      window.removeEventListener('outreachr:session-expired', sessionExpired);
       window.removeEventListener('focus', refreshAccount);
       if (timer !== undefined) window.clearInterval(timer);
     };
@@ -206,8 +214,13 @@ function CloudApp() {
   return (
     <>
       {reauthRequired && (
-        <main className="cloud-landing">
-          <h1>Sign in again to continue</h1>
+        <dialog
+          ref={renewalDialog}
+          className="cloud-landing"
+          aria-labelledby="renewal-title"
+          onCancel={(event) => event.preventDefault()}
+        >
+          <h1 id="renewal-title">Sign in again to continue</h1>
           <p>
             Unsaved edits remain in this tab while it stays open. Sign in with the same account in
             the new tab, then return here.
@@ -230,7 +243,7 @@ function CloudApp() {
             Check session
           </button>
           {error && <p role="alert">{error}</p>}
-        </main>
+        </dialog>
       )}
       <div className="cloud-root" style={reauthRequired ? { display: 'none' } : undefined}>
         <header className="cloud-bar">
