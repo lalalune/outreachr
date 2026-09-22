@@ -281,6 +281,18 @@ test('signs in, persists Shaw fixture contact and draft, runs a proposal, export
   await navigation.getByRole('link', { name: 'Outreach', exact: true }).click();
   await page.getByRole('button', { name: /Shaw Fixture/ }).click();
   const draft = page.getByRole('dialog', { name: 'Message to Shaw Fixture' });
+  const pendingSubject = `${await draft.getByLabel('Subject', { exact: true }).inputValue()} - reviewed`;
+  await draft.getByLabel('Subject', { exact: true }).fill(pendingSubject);
+  await page.route('**/api/me', (route) =>
+    route.fulfill({ status: 401, json: { error: 'Session expired', code: 'session_expired' } }),
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('heading', { name: 'Sign in again to continue' })).toBeVisible();
+  await expect(draft).toBeHidden();
+  await page.unroute('**/api/me');
+  await page.getByRole('button', { name: 'Check session', exact: true }).click();
+  await expect(draft.getByLabel('Subject', { exact: true })).toHaveValue(pendingSubject);
+
   await draft.getByRole('button', { name: 'Approve exact message', exact: true }).click();
   await draft.getByRole('button', { name: 'Send now', exact: true }).click();
   await expect(draft.getByRole('button', { name: 'Draft follow-up', exact: true })).toBeVisible();
