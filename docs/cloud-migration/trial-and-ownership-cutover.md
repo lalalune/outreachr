@@ -2,7 +2,7 @@
 
 ## SDK account-resolution contract
 
-The app vendors Cloud SDK source `4970b47fbb83533390a515d75e719243d56d1a4f`
+The app vendors Cloud SDK source `679ea26dfa1d0aad8c449664beb1ece06ba78e85`
 with SHA-256 `1896a19c2aacb65081a60132793f656ff457cee312f5684b4001f34b5903c340`.
 The SDK resolves workspaces through `/api/v1/apps/{appId}/billing/accounts/resolve`.
 The consumer fixtures use that same route. The previous SDK and fixtures both
