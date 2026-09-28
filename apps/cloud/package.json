@@ -17,9 +17,9 @@
     "@outreachr/agents": "workspace:*",
     "@outreachr/connectors": "workspace:*",
     "@outreachr/core": "workspace:*",
-    "hono": "4.13.7",
+    "hono": "4.13.8",
     "pg": "8.23.0",
-    "tsx": "^4.21.0",
+    "tsx": "^4.23.15",
     "zod": "4.6.5"
   },
   "devDependencies": {
