@@ -23,7 +23,7 @@
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "5.2.0",
     "typescript": "6.0.3",
-    "vite": "7.3.6",
+    "vite": "7.3.7",
     "vitest": "5.0.0",
     "wrangler": "4.131.2"
   }
