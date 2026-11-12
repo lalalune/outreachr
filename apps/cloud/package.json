@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@elizaos/cloud-sdk": "file:../../vendor/elizaos-cloud-sdk-679ea26dfa1d.tgz",
-    "@hono/node-server": "^2.1.1",
+    "@hono/node-server": "^2.1.6",
     "@outreachr/agents": "workspace:*",
     "@outreachr/connectors": "workspace:*",
     "@outreachr/core": "workspace:*",
